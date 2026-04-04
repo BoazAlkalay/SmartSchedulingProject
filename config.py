@@ -1,8 +1,18 @@
 from pathlib import Path
+import os
 
 
+# Detect which machine we're on by username
+username = os.getlogin()
+
+if username == "boaz_":  # desktop username
+    VAULT_PATH = Path("C:/Obsidian Vault Location/SmartScheduler")
+elif username == "boaza":  # laptop username
+    VAULT_PATH = Path("C:/Obsidian Vaults/SmartScheduler")
+else:
+    raise ValueError(f"Unknown machine: {username}. Add your vault path to config.py")
 # Vault location — update this when moving to desktop
-VAULT_PATH = Path("C:\Obsidian Vault Location\MySmartScheduler")
+VAULT_PATH = Path("C:/Obsidian Vaults/SmartScheduler")
 
 # System file paths
 CORE_INSTRUCTIONS = VAULT_PATH / "system/core_instructions.md"
