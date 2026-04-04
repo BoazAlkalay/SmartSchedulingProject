@@ -4,7 +4,6 @@ import os
 
 # Detect which machine we're on by username
 username = os.getlogin()
-print(username)
 
 if username == "boaz_":  # desktop username
     VAULT_PATH = Path("C:/Obsidian Vault Location/SmartScheduler")
@@ -42,10 +41,3 @@ DND = PERSONAL / "dnd"
 # LLM Models
 RUNTIME_MODEL = "claude-haiku-4-5-20251001"
 REFINEMENT_MODEL = "claude-sonnet-4-6"
-
-import os
-print(os.getlogin())
-
-from pathlib import Path
-p = Path("C:/Obsidian Vault Location/SmartScheduler/inbox")
-print(p.exists())

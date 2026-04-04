@@ -12,7 +12,8 @@ def read_tasks(folder="inbox"):
         tasks.append({
             "file": file.name,
             "metadata": post.metadata,
-            "notes": post.content
+            "notes": post.content,
+            "scheduling_instructions": post.metadata.get("scheduling_instructions", "")
         })
     
     return tasks
