@@ -2,7 +2,7 @@ import json
 import re
 import frontmatter
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from llm import ask
 from config import (
     INBOX,
@@ -35,12 +35,16 @@ def parse_task_from_text(raw_text: str) -> dict:
     takes natural language input and returns a structured task dictionary.
     """
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    day_of_week = datetime.now().strftime("%A").lower()
-
-
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    day_of_week = now.strftime("%A").lower()
+    current_time = now.strftime("%H:%M")
+    
     prompt = f"""
-Today is {today} ({day_of_week}).
+Today is {today} ({day_of_week}) and the current time is {current_time}.
+When the user says "today" the deadline is exactly {today}.
+When the user says "tomorrow" the deadline is exactly {(now + __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")}.
+When the user says "this week" the deadline is the coming Sunday.
 
 Parse the following into a task. Return ONLY a JSON object with these exact fields:
 {{

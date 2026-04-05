@@ -77,6 +77,16 @@ def what_now(current_energy: str = None, slots_remaining: str = None):
     runtime = load_runtime_context()
     tasks = get_all_tasks()
     recent_checkins = get_recent_checkins(days=3)
+    
+    # ← ADD THE GUARD HERE, after tasks is loaded
+    if not tasks:
+        return "No tasks in your vault right now. Add some tasks first."
+
+    if len(tasks) == 1:
+        task = tasks[0]
+        title = task['metadata'].get('title', 'your task')
+        duration = task['metadata'].get('duration_estimated', 'unknown duration')
+        return f"You only have one task right now:\n\n→ {title} ({duration})\n\nAdd more tasks to get multiple options."
 
     # format for prompt
     task_list = format_tasks_for_prompt(tasks)
@@ -89,9 +99,13 @@ def what_now(current_energy: str = None, slots_remaining: str = None):
     if slots_remaining:
         energy_context += f"Spell slots remaining today: {slots_remaining}\n"
 
+    today = now.strftime("%Y-%m-%d")
+
     prompt = f"""
 Current time: {current_time}
 Current day: {current_day}
+Today's date: {today}
+Any task with deadline {today} is due TODAY, not tomorrow.
 {energy_context}
 
 Recent checkins:
@@ -103,18 +117,20 @@ Available tasks:
 Soft schedule preferences:
 {runtime['soft_schedule']}
 
-Based on all of the above, suggest 2-3 tasks this person could do right now.
-Follow the scheduling rules in your instructions exactly.
-Format your response like this:
+IMPORTANT RULES YOU MUST FOLLOW:
+- Suggest EXACTLY 2-3 options, never more, never less
+- Only suggest tasks that exist in the task list above
+- Do not invent or suggest generic categories
+- Keep each option to 2 lines maximum
+- Do not include any preamble or introduction.
+- Start your response directly with Option 1.
+- Format exactly like this and no other way:
 
-Option 1 — [task name] ([duration])
-Why: [one sentence reason]
+Option 1 — [exact task name] ([duration])
+Why: [one sentence]
 
-Option 2 — [task name] ([duration])
-Why: [one sentence reason]
-
-Option 3 — [task name] ([duration]) 
-Why: [one sentence reason]
+Option 2 — [exact task name] ([duration])
+Why: [one sentence]
 
 Keep it short, scannable, and non-judgmental.
 """
