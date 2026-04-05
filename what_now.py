@@ -5,6 +5,7 @@ from system_reader import load_runtime_context
 from checkin import get_recent_checkins
 from llm import ask
 from config import INBOX, TASKS
+from calendar_reader import get_todays_events, get_free_slots
 
 
 def get_all_tasks():
@@ -77,7 +78,27 @@ def what_now(current_energy: str = None, slots_remaining: str = None):
     runtime = load_runtime_context()
     tasks = get_all_tasks()
     recent_checkins = get_recent_checkins(days=3)
-    
+    # Load calendar data
+    todays_events = get_todays_events()
+    free_slots = get_free_slots(todays_events)
+
+    # Format calendar context
+    events_text = ""
+    if todays_events:
+        events_text = "Today's hard blocks:\n"
+        for e in todays_events:
+            events_text += f"  - {e['title']} ({e['start']} → {e['end']})\n"
+    else:
+        events_text = "No hard blocks today."
+
+    slots_text = ""
+    if free_slots:
+        slots_text = "Available time slots today:\n"
+        for slot in free_slots:
+            slots_text += f"  - {slot['start']} → {slot['end']} ({slot['duration_minutes']} min)\n"
+    else:
+        slots_text = "No free slots found today."
+
     # ← ADD THE GUARD HERE, after tasks is loaded
     if not tasks:
         return "No tasks in your vault right now. Add some tasks first."
@@ -108,6 +129,11 @@ Today's date: {today}
 Any task with deadline {today} is due TODAY, not tomorrow.
 {energy_context}
 
+Calendar:
+{events_text}
+
+{slots_text}
+
 Recent checkins:
 {checkin_summary}
 
@@ -117,13 +143,14 @@ Available tasks:
 Soft schedule preferences:
 {runtime['soft_schedule']}
 
-IMPORTANT RULES YOU MUST FOLLOW:
-- Suggest EXACTLY 2-3 options, never more, never less
-- Only suggest tasks that exist in the task list above
-- Do not invent or suggest generic categories
-- Keep each option to 2 lines maximum
-- Do not include any preamble or introduction.
-- Start your response directly with Option 1.
+CRITICAL RULES:
+- You MUST only suggest tasks from the task list above
+- You MUST only suggest tasks that fit within an available time slot
+- Never suggest a task longer than the available slot duration
+- If the only free slot is 30 min do not suggest a 90 min task
+- Start response directly with Option 1, no preamble
+- Suggest EXACTLY 2-3 options, never more
+- Do NOT invent tasks or generic suggestions
 - Format exactly like this and no other way:
 
 Option 1 — [exact task name] ([duration])
