@@ -177,9 +177,32 @@ def get_current_tasks():
                     "file": filepath.name
                 })
 
-        return {"tasks": tasks}
+        return {
+            "tasks": tasks,
+            "titles": [t["title"] for t in tasks]
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/tasks/titles")
+def get_task_titles():
+    """Return task titles as a plain list for Shortcuts."""
+    try:
+        from config import TASKS, INBOX
+        import frontmatter
+        
+        titles = []
+        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+            post = frontmatter.load(filepath)
+            title = post.metadata.get("title", "")
+            status = post.metadata.get("status", "")
+            if title and status and status != "done":
+                titles.append(title)
+        
+        return titles
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     uvicorn.run(
