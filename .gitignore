@@ -15,3 +15,6 @@ __pycache__/
 # API keys (just in case)
 *.key
 secrets.py
+
+# contains api key
+start_server.bat
