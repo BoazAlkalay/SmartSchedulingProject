@@ -203,6 +203,25 @@ def get_task_titles():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class ScheduleTaskRequest(BaseModel):
+    task_title: str
+    duration_minutes: int
+    preferred_slot: Optional[str] = None
+
+@app.post("/schedule-task")
+def schedule_task_endpoint(request: ScheduleTaskRequest):
+    """Find a slot and schedule a task on Google Calendar."""
+    try:
+        from calendar_writer import schedule_task
+        result = schedule_task(
+            task_title=request.task_title,
+            duration_minutes=request.duration_minutes,
+            preferred_slot=request.preferred_slot
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 
 if __name__ == "__main__":
     uvicorn.run(
@@ -211,3 +230,11 @@ if __name__ == "__main__":
         port=8000,
         reload=True
     )
+
+from reschedule import retry_later
+retry_later(
+    task_title="Texas data quiz",
+    retry_time="2026-04-05 20:00",
+    retry_note="didn't start, trying again at 8pm",
+    energy="medium"
+)

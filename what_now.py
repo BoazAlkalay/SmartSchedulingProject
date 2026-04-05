@@ -78,9 +78,24 @@ def what_now(current_energy: str = None, slots_remaining: str = None):
     runtime = load_runtime_context()
     tasks = get_all_tasks()
     recent_checkins = get_recent_checkins(days=3)
+    
     # Load calendar data
     todays_events = get_todays_events()
     free_slots = get_free_slots(todays_events)
+
+    # Check for imminent events
+    now = datetime.now()
+    urgent_warning = ""
+    for event in todays_events:
+        if event['all_day']:
+            continue
+        event_start = datetime.fromisoformat(event['start'].replace('Z', ''))
+        event_start = event_start.replace(tzinfo=None)
+        minutes_until = (event_start - now).seconds // 60
+    
+        if 0 < minutes_until <= 30:
+            urgent_warning = f"⚠️ WARNING: {event['title']} starts in {minutes_until} minutes!\n"
+            break
 
     # Format calendar context
     events_text = ""
@@ -122,7 +137,10 @@ def what_now(current_energy: str = None, slots_remaining: str = None):
 
     today = now.strftime("%Y-%m-%d")
 
+    max_slot = max([s['duration_minutes'] for s in free_slots]) if free_slots else 120
+
     prompt = f"""
+{urgent_warning}
 Current time: {current_time}
 Current day: {current_day}
 Today's date: {today}
@@ -144,6 +162,7 @@ Soft schedule preferences:
 {runtime['soft_schedule']}
 
 CRITICAL RULES:
+- If there is a WARNING at the top, always mention it first before suggestions
 - You MUST only suggest tasks from the task list above
 - You MUST only suggest tasks that fit within an available time slot
 - Never suggest a task longer than the available slot duration
@@ -151,6 +170,8 @@ CRITICAL RULES:
 - Start response directly with Option 1, no preamble
 - Suggest EXACTLY 2-3 options, never more
 - Do NOT invent tasks or generic suggestions
+- The longest available slot right now is {max_slot} minutes
+- NEVER suggest a task longer than {max_slot} minutes
 - Format exactly like this and no other way:
 
 Option 1 — [exact task name] ([duration])

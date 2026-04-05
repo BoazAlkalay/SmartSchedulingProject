@@ -35,6 +35,12 @@ def panic_button(reason: str = "") -> str:
         post = frontmatter.load(filepath)
 
         if post.metadata.get("status") == "scheduled":
+
+            # delete calendar event before clearing ID
+            event_id = post.metadata.get("calendar_event_id")
+            if event_id:
+                from calendar_writer import delete_calendar_event
+                delete_calendar_event(event_id)
             updates = {
                 "status": "unscheduled",
                 "scheduled_time": None,
@@ -49,6 +55,12 @@ def panic_button(reason: str = "") -> str:
         post = frontmatter.load(filepath)
 
         if post.metadata.get("status") == "scheduled":
+
+            # delete calendar event before clearing ID
+            event_id = post.metadata.get("calendar_event_id")
+            if event_id:
+                from calendar_writer import delete_calendar_event
+                delete_calendar_event(event_id)
             updates = {
                 "status": "unscheduled",
                 "scheduled_time": None,
@@ -134,17 +146,27 @@ def retry_later(
     for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
         post = frontmatter.load(filepath)
         title = post.metadata.get("title", "")
-        
+    
         if task_title.lower() in title.lower() or title.lower() in task_title.lower():
+        
+            # Delete existing calendar event if one exists
+            event_id = post.metadata.get("calendar_event_id")
+            if event_id:
+                from calendar_writer import delete_calendar_event
+                delete_calendar_event(event_id)
+        
             updates = {
                 "retry_at": retry_time,
                 "retry_note": retry_note if retry_note else "retrying later",
-                "times_deferred": post.metadata.get("times_deferred", 0) + 1
+                "times_deferred": post.metadata.get("times_deferred", 0) + 1,
+                "status": "unscheduled",
+                "scheduled_time": None,
+                "calendar_event_id": None
             }
             update_task_file(filepath, updates)
             found = True
             break
-    
+
     if not found:
         print(f"Could not find task matching: {task_title}")
         print("Logging checkin anyway.")
