@@ -21,3 +21,7 @@ start_server.bat
 
 # google calendar client secret
 credentials.json
+
+# google calendar tokens
+token_personal.json
+token_school.json
