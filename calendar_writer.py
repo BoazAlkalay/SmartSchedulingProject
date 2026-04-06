@@ -18,14 +18,30 @@ def find_best_slot(duration_minutes: int) -> dict:
     
     for slot in free_slots:
         if slot['duration_minutes'] >= duration_minutes:
-            # Parse slot start time
+            # Parse slot boundaries
             slot_start = datetime.strptime(
                 f"{now.strftime('%Y-%m-%d')} {slot['start']}", 
                 "%Y-%m-%d %I:%M %p"
             )
+            slot_end = datetime.strptime(
+                f"{now.strftime('%Y-%m-%d')} {slot['end']}", 
+                "%Y-%m-%d %I:%M %p"
+            )
+        
+            # Use current time as start if we're already inside this slot
+            effective_start = max(slot_start, now)
+        
+            # Check enough time remains in slot
+            remaining_minutes = (slot_end - effective_start).seconds // 60
+            if remaining_minutes >= duration_minutes:
+                end = effective_start + timedelta(minutes=duration_minutes)
+                return {
+                    'start': effective_start.strftime("%I:%M %p"),
+                    'end': end.strftime("%I:%M %p"),
+                    'start_iso': effective_start.isoformat(),
+                    'end_iso': end.isoformat()
+                }
             
-            # Only suggest future slots
-            if slot_start > now:
                 slot_end = slot_start + timedelta(minutes=duration_minutes)
                 return {
                     'start': slot_start.strftime("%I:%M %p"),
