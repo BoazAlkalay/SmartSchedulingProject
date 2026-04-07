@@ -223,6 +223,45 @@ def schedule_task_endpoint(request: ScheduleTaskRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
 
+
+class FindSlotRequest(BaseModel):
+    duration_minutes: int
+
+@app.post("/find-slot")
+def find_slot_endpoint(request: FindSlotRequest):
+    """Find the best available slot for a given duration."""
+    try:
+        from calendar_writer import find_best_slot
+        slot = find_best_slot(request.duration_minutes)
+        if not slot:
+            return {"status": "no_slot", "message": "No available slot found today"}
+        return {"status": "found", "start": slot['start'], "end": slot['end'], 
+                "start_iso": slot['start_iso'], "end_iso": slot['end_iso']}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+class CompleteTaskRequest(BaseModel):
+    task_title: str
+    actual_duration: Optional[str] = ""
+    energy: Optional[str] = "unknown"
+    notes: Optional[str] = ""
+
+@app.post("/complete-task")
+def complete_task_endpoint(request: CompleteTaskRequest):
+    """Mark a task as complete."""
+    try:
+        from reschedule import complete_task
+        message = complete_task(
+            task_title=request.task_title,
+            actual_duration=request.actual_duration,
+            energy=request.energy,
+            notes=request.notes
+        )
+        return {"status": "done", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
 if __name__ == "__main__":
     uvicorn.run(
         "server:app",
@@ -230,11 +269,3 @@ if __name__ == "__main__":
         port=8000,
         reload=True
     )
-
-from reschedule import retry_later
-retry_later(
-    task_title="Texas data quiz",
-    retry_time="2026-04-05 20:00",
-    retry_note="didn't start, trying again at 8pm",
-    energy="medium"
-)

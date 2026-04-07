@@ -182,6 +182,57 @@ def retry_later(
     print(message)
     return message
 
+
+def complete_task(
+    task_title: str,
+    actual_duration: str = "",
+    energy: str = "unknown",
+    notes: str = ""
+) -> str:
+    """
+    Mark a task as complete, delete calendar event, log checkin.
+    """
+    found = False
+    
+    for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+        post = frontmatter.load(filepath)
+        title = post.metadata.get("title", "")
+        
+        if task_title.lower() in title.lower() or title.lower() in task_title.lower():
+            
+            # Delete calendar event if exists
+            event_id = post.metadata.get("calendar_event_id")
+            if event_id:
+                from calendar_writer import delete_calendar_event
+                delete_calendar_event(event_id)
+            
+            updates = {
+                "status": "done",
+                "calendar_event_id": None,
+                "scheduled_time": None,
+                "progress": "100%",
+                "remaining": "0",
+                "completed": datetime.now().strftime("%Y-%m-%d"),
+                "duration_actual": actual_duration
+            }
+            update_task_file(filepath, updates)
+            found = True
+            break
+    
+    if not found:
+        print(f"Could not find task matching: {task_title}")
+    
+    # Log checkin regardless
+    create_checkin(
+        doing=f"completed: {task_title}",
+        energy=energy,
+        notes=f"actual duration: {actual_duration}. {notes}"
+    )
+    
+    message = f"'{task_title}' marked as done. Well done."
+    print(message)
+    return message
+
 if __name__ == "__main__":
     print("=== Test Stopping Now ===")
     stopping_now(
@@ -200,5 +251,4 @@ if __name__ == "__main__":
         energy="low"
     )
     
-    print("\n=== Test Panic Button ===")
-    panic_button("day got away from me, resetting everything")
+
