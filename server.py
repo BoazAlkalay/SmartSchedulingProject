@@ -206,7 +206,7 @@ def get_task_titles():
 class ScheduleTaskRequest(BaseModel):
     task_title: str
     duration_minutes: int
-    preferred_slot: Optional[str] = None
+    preferred_start: Optional[str] = None
 
 @app.post("/schedule-task")
 def schedule_task_endpoint(request: ScheduleTaskRequest):
@@ -216,12 +216,11 @@ def schedule_task_endpoint(request: ScheduleTaskRequest):
         result = schedule_task(
             task_title=request.task_title,
             duration_minutes=request.duration_minutes,
-            preferred_slot=request.preferred_slot
+            preferred_start=request.preferred_start
         )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
 
 
 class FindSlotRequest(BaseModel):
