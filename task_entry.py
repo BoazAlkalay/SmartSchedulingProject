@@ -100,6 +100,9 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
 
     # create filename from title
     title = task_data.get("title", "untitled task")
+    
+    # Normalize: replace underscores with spaces, title-case
+    title = title.replace("_", " ").strip()
 
     # Warn if duplicate title detected
     if title_exists(title):

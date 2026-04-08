@@ -46,6 +46,12 @@ class NoteRequest(BaseModel):
     note: str
     type: Optional[str] = "observation"
 
+class ScheduleTaskRequest(BaseModel):
+    task_title: str
+    duration_minutes: int
+    preferred_start: Optional[str] = None
+    preferred_date: Optional[str] = None  
+
 # --- Endpoints ---
 
 @app.get("/health")
@@ -203,11 +209,8 @@ def get_task_titles():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-class ScheduleTaskRequest(BaseModel):
-    task_title: str
-    duration_minutes: int
-    preferred_start: Optional[str] = None
-
+ 
+ 
 @app.post("/schedule-task")
 def schedule_task_endpoint(request: ScheduleTaskRequest):
     """Find a slot and schedule a task on Google Calendar."""
@@ -216,12 +219,12 @@ def schedule_task_endpoint(request: ScheduleTaskRequest):
         result = schedule_task(
             task_title=request.task_title,
             duration_minutes=request.duration_minutes,
-            preferred_start=request.preferred_start
+            preferred_start=request.preferred_start,
+            preferred_date=request.preferred_date   # NEW
         )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 class FindSlotRequest(BaseModel):
     duration_minutes: int
@@ -259,7 +262,200 @@ def complete_task_endpoint(request: CompleteTaskRequest):
         return {"status": "done", "message": message}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+@app.get("/whats-coming")
+def whats_coming(scope: str = "today_remaining"):
+    """
+    Return a merged, sorted view of calendar events and scheduled tasks.
+ 
+    scope options:
+      - today_remaining  → from now until end of today
+      - full_today       → full day from midnight (includes past events/tasks)
+      - two_days         → rest of today + all of tomorrow
+    """
+    try:
+        from calendar_reader import get_all_events, parse_event_time
+        from config import TASKS, INBOX
+        import frontmatter
+        from datetime import datetime, timedelta
+ 
+        now = datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+        tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+ 
+        # --- Define time window ---
+        if scope == "full_today":
+            window_start = datetime.fromisoformat(f"{today_str}T00:00:00")
+            window_end = datetime.fromisoformat(f"{today_str}T23:59:59")
+            days_ahead = 1
+        elif scope == "two_days":
+            window_start = now
+            window_end = datetime.fromisoformat(f"{tomorrow_str}T23:59:59")
+            days_ahead = 2
+        else:  # today_remaining (default)
+            window_start = now
+            window_end = datetime.fromisoformat(f"{today_str}T23:59:59")
+            days_ahead = 1
+ 
+        # --- Fetch calendar events ---
+        raw_events = get_all_events(days_ahead=days_ahead)
+        items = []
+ 
+        for e in raw_events:
+            if e['all_day']:
+                continue
+ 
+            try:
+                start_dt = parse_event_time(e['start']).replace(tzinfo=None)
+                end_dt = parse_event_time(e['end']).replace(tzinfo=None)
+            except Exception:
+                continue
+ 
+            if start_dt < window_start or start_dt > window_end:
+                continue
+ 
+            items.append({
+                "type": "calendar",
+                "title": e['title'],
+                "calendar": e['calendar'],
+                "start_dt": start_dt,
+                "start": start_dt.strftime("%I:%M %p"),
+                "end": end_dt.strftime("%I:%M %p"),
+                "date": start_dt.strftime("%Y-%m-%d"),
+                "status": None,
+                "energy": None,
+                "overdue": False,
+            })
+ 
+        # --- Fetch scheduled tasks ---
+        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+            post = frontmatter.load(filepath)
+            title = post.metadata.get("title", "")
+            status = post.metadata.get("status", "")
+            scheduled_time = post.metadata.get("scheduled_time")
+            scheduled_date = post.metadata.get("scheduled_date")
+ 
+            if not title or status != "scheduled" or not scheduled_time:
+                continue
+ 
+            # Use scheduled_date if available, otherwise fall back to today
+            date_str = scheduled_date if scheduled_date else today_str
+ 
+            try:
+                try:
+                    task_dt = datetime.strptime(
+                        f"{date_str} {scheduled_time}", "%Y-%m-%d %I:%M %p"
+                    )
+                except ValueError:
+                    task_dt = datetime.strptime(
+                        f"{date_str} {scheduled_time}", "%Y-%m-%d %H:%M"
+                    )
+            except Exception:
+                continue
+ 
+            # Overdue = scheduled in the past and not done
+            overdue = task_dt < now
+ 
+            # For today_remaining: include overdue tasks so they aren't invisible
+            # For other scopes: apply normal window filter
+            if scope == "today_remaining":
+                if task_dt > window_end:
+                    continue
+                # overdue tasks always included — they need attention
+            else:
+                if task_dt < window_start or task_dt > window_end:
+                    continue
+ 
+            duration = post.metadata.get("duration_estimated", "")
+            energy = post.metadata.get("energy_required", "unknown")
+ 
+            items.append({
+                "type": "task",
+                "title": title,
+                "calendar": None,
+                "start_dt": task_dt,
+                "start": task_dt.strftime("%I:%M %p"),
+                "end": None,
+                "date": date_str,
+                "status": status,
+                "energy": energy,
+                "duration": duration,
+                "overdue": overdue,
+            })
+ 
+        # --- Sort: overdue tasks first, then chronological ---
+        items.sort(key=lambda x: (not x["overdue"], x["start_dt"]))
+ 
+        # --- Strip start_dt (not JSON serializable) ---
+        for item in items:
+            del item["start_dt"]
+ 
+        # --- Build plain text summary ---
+        if not items:
+            summary = "Nothing scheduled for this window. Free time."
+        else:
+            lines = []
+            current_date = None
+            showed_overdue_header = False
+ 
+            for item in items:
+                # Overdue section header
+                if item["overdue"] and not showed_overdue_header:
+                    lines.append("⚠️ Overdue")
+                    showed_overdue_header = True
+                elif not item["overdue"] and showed_overdue_header and current_date is None:
+                    lines.append("")  # spacer after overdue section
+ 
+                # Date header for two_days scope
+                if scope == "two_days" and not item["overdue"] and item["date"] != current_date:
+                    current_date = item["date"]
+                    label = "Today" if current_date == today_str else "Tomorrow"
+                    lines.append(f"\n── {label} ──")
+ 
+                if item["type"] == "calendar":
+                    lines.append(
+                        f"📅 {item['start']} {item['title']} ({item['calendar']})"
+                    )
+                else:
+                    duration_str = f" · {item['duration']}" if item.get("duration") else ""
+                    energy_str = f" [{item['energy']}]" if item.get("energy") else ""
+                    overdue_flag = " ⚠️" if item["overdue"] else ""
+                    lines.append(
+                        f"✅ {item['start']} {item['title']}{duration_str}{energy_str}{overdue_flag}"
+                    )
+ 
+            summary = "\n".join(lines).strip()
+ 
+        return {
+            "scope": scope,
+            "generated_at": now.strftime("%Y-%m-%d %H:%M"),
+            "count": len(items),
+            "summary": summary,
+            "items": items
+        }
+ 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+ 
+
+class ExtendTaskRequest(BaseModel):
+    task_title: str
+    additional_minutes: int
+    energy: Optional[str] = "unknown"
+ 
+@app.post("/extend-task")
+def extend_task_endpoint(request: ExtendTaskRequest):
+    """Extend a task that's currently in progress."""
+    try:
+        from reschedule import extend_task
+        message = extend_task(
+            task_title=request.task_title,
+            additional_minutes=request.additional_minutes,
+            energy=request.energy
+        )
+        return {"status": "extended", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(
