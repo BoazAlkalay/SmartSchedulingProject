@@ -245,6 +245,24 @@ def retry_later(
     print(message)
     return message
 
+def plan_task(task_title: str, planned_date: str) -> str:
+    """
+    assign a planned date to a task without scheduling a specific time
+    """
+    filepath = find_task_file(task_title)
+
+    if not filepath:
+        return f"Could not find task: {task_title}"
+    
+    updates = {
+        "planned_date": planned_date
+    }
+    update_task_file(filepath, updates)
+
+    message = f"'{task_title}' planned for {planned_date}."
+    print(message)
+    return message
+
 def extend_task(
     task_title: str,
     additional_minutes: int,

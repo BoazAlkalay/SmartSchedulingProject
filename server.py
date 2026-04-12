@@ -52,6 +52,27 @@ class ScheduleTaskRequest(BaseModel):
     preferred_start: Optional[str] = None
     preferred_date: Optional[str] = None  
 
+class PlanTaskRequest(BaseModel):
+    task_title: str
+    planned_date: str
+
+class FindSlotRequest(BaseModel):
+    duration_minutes: int
+
+    
+class CompleteTaskRequest(BaseModel):
+    task_title: str
+    actual_duration: Optional[str] = ""
+    energy: Optional[str] = "unknown"
+    notes: Optional[str] = ""
+
+class ExtendTaskRequest(BaseModel):
+    task_title: str
+    additional_minutes: int
+    energy: Optional[str] = "unknown"
+
+
+
 # --- Endpoints ---
 
 @app.get("/health")
@@ -226,8 +247,21 @@ def schedule_task_endpoint(request: ScheduleTaskRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-class FindSlotRequest(BaseModel):
-    duration_minutes: int
+@app.post("/plan-task")
+def plan_task_endpoint(request: PlanTaskRequest):
+    """
+    assign a planned date to a task without scheduling a specific time
+    """
+    try:
+        from reschedule import plan_task
+        message = plan_task(
+            task_title=request.task_title,
+            planned_date=request.planned_date
+        )
+        return {"status": "planned", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/find-slot")
 def find_slot_endpoint(request: FindSlotRequest):
@@ -241,12 +275,6 @@ def find_slot_endpoint(request: FindSlotRequest):
                 "start_iso": slot['start_iso'], "end_iso": slot['end_iso']}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-class CompleteTaskRequest(BaseModel):
-    task_title: str
-    actual_duration: Optional[str] = ""
-    energy: Optional[str] = "unknown"
-    notes: Optional[str] = ""
 
 @app.post("/complete-task")
 def complete_task_endpoint(request: CompleteTaskRequest):
@@ -438,11 +466,7 @@ def whats_coming(scope: str = "today_remaining"):
         raise HTTPException(status_code=500, detail=str(e))
  
 
-class ExtendTaskRequest(BaseModel):
-    task_title: str
-    additional_minutes: int
-    energy: Optional[str] = "unknown"
- 
+
 @app.post("/extend-task")
 def extend_task_endpoint(request: ExtendTaskRequest):
     """Extend a task that's currently in progress."""
