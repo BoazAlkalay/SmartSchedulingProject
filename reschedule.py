@@ -51,6 +51,7 @@ def panic_button(reason: str = "") -> str:
     Marks all scheduled tasks as unscheduled and resets their schedules.
     """
     now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
     reset_count = 0
 
     all_files = list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md"))
@@ -59,7 +60,11 @@ def panic_button(reason: str = "") -> str:
         post = frontmatter.load(filepath)
 
         if post.metadata.get("status") == "scheduled":
-
+            # make sure to only reset tasks scheduled today
+            scheduled_date = post.metadata.get("scheduled_date", today_str)
+            if scheduled_date != today_str:
+                continue
+            
             # Delete calendar event before clearing ID
             event_id = post.metadata.get("calendar_event_id")
             if event_id:
@@ -250,6 +255,7 @@ def plan_task(task_title: str, planned_date: str) -> str:
     assign a planned date to a task without scheduling a specific time
     """
     filepath = find_task_file(task_title)
+    planned_date = planned_date.strip()
 
     if not filepath:
         return f"Could not find task: {task_title}"

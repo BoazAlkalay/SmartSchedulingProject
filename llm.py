@@ -45,7 +45,7 @@ def ask_anthropic(prompt: str, system_prompt: str = "") -> str:
     )
     return message.content[0].text
 
-def ask(user_message: str, include_system: bool = True, use_local: bool = True) -> str:
+def ask(user_message: str, include_system: bool = True, use_local: bool = False) -> str:
     """
     Send a message to the LLM.
     Tries Ollama first, falls back to Anthropic if it fails.

@@ -52,6 +52,7 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "duration_estimated": "e.g. 45min or 2hr",
     "priority": "low, medium, high, or critical",
     "deadline": "YYYY-MM-DD or null",
+    "planned_date": "YYYY-MM-DD or null",
     "recurrence": "e.g. every week or null",
     "energy_required": "cantrip, low, medium, high, or deep",
     "slot_level": 0-9,
@@ -92,8 +93,11 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
         if folder_path == "inbox":
             destination = INBOX
         else:
-            # build path from folder string e.g "tasks/work/deep-work"
-            destination = TASKS.parent / folder_path
+            # Normalize: strip leading "tasks/" if present, then re-root under TASKS
+            # This prevents rogue folders at vault root if LLM omits "tasks/" prefix
+            if folder_path.startswith("tasks/"):
+                folder_path = folder_path[len("tasks/"):]
+            destination = TASKS / folder_path
 
     # make sure folder exists
     destination.mkdir(parents=True, exist_ok=True)
@@ -129,6 +133,7 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
         "duration_estimated": task_data.get("duration_estimated", ""),
         "priority": task_data.get("priority", "medium"),
         "deadline": task_data.get("deadline"),
+        "planned_date": task_data.get("planned_date"),
         "recurrence": task_data.get("recurrence"),
         "status": "unscheduled",
         "progress": "0%",

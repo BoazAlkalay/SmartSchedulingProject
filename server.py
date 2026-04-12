@@ -18,6 +18,7 @@ class WhatNowRequest(BaseModel):
 
 class AddTaskRequest(BaseModel):
     text: str
+    force: bool = False
 
 class CheckinRequest(BaseModel):
     doing: str
@@ -80,6 +81,7 @@ def health_check():
     """Quick check that the server is running."""
     return {"status": "ok"}
 
+    
 @app.post("/what-now")
 def get_what_now(request: WhatNowRequest):
     """What should I do right now?"""
@@ -96,85 +98,66 @@ def get_what_now(request: WhatNowRequest):
 def add_task_endpoint(request: AddTaskRequest):
     """Add a new task from natural language."""
     try:
-        filepath = add_task(request.text)
-        if filepath is None:
+        from task_entry import parse_task_from_text, create_task_file, title_exists
+
+        task_data = parse_task_from_text(request.text)
+
+        if task_data is None:
             raise HTTPException(status_code=400, detail="Failed to parse task.")
+
+        title = task_data.get("title", "").replace("_", " ").strip()
+
+        # checks for duplicates
+        if not request.force and title_exists(title):
+            return {
+                "status": "duplicate",
+                "title": title,
+                "message": f"A task called '{title}' already exists."
+            }
+
+        filepath = create_task_file(task_data)
         return {"status": "created", "file": str(filepath)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/checkin")
-def checkin_endpoint(request: CheckinRequest):
-    """Log what you're currently doing."""
+@app.post("/parse-task")
+def parse_task_endpoint(request: AddTaskRequest):
     try:
-        filepath = create_checkin(
-            doing=request.doing,
-            energy=request.energy,
-            slots_remaining=request.slots_remaining,
-            mood=request.mood,
-            notes=request.notes
-        )
-        return {"status": "logged", "file": str(filepath)}
+        from task_entry import parse_task_from_text
+
+        task_data = parse_task_from_text(request.text)
+
+        if task_data is None:
+            raise HTTPException(status_code=400, detail="Failed to parse task.")
+
+        summary = f"""Title: {task_data.get('title', '?')}
+Duration: {task_data.get('duration_estimated', '?')}
+Energy: {task_data.get('energy_required', '?')}
+Priority: {task_data.get('priority', '?')}
+Deadline: {task_data.get('deadline', 'none')}
+Folder: {task_data.get('folder', '?')}
+Tags: {', '.join(task_data.get('tags', []))}"""
+
+        return {"status": "parsed", "task": task_data, "summary": summary}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/panic")
-def panic_endpoint(request: PanicRequest):
-    """Panic button — reset everything without judgment."""
+@app.get("/tasks/titles")
+def get_task_titles():
+    """Return task titles as a plain list for Shortcuts."""
     try:
-        message = panic_button(request.reason)
-        return {"status": "reset", "message": message}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/stopping-now")
-def stopping_now_endpoint(request: StoppingNowRequest):
-    """Stopping on a task but need more time."""
-    try:
-        message = stopping_now(
-            task_title=request.task_title,
-            progress=request.progress,
-            remaining=request.remaining,
-            continuation_note=request.continuation_note,
-            energy=request.energy
-        )
-        return {"status": "saved", "message": message}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/retry")
-def retry_endpoint(request: RetryRequest):
-    """Didn't start — set a retry time."""
-    try:
-        message = retry_later(
-            task_title=request.task_title,
-            retry_time=request.retry_time,
-            retry_note=request.retry_note,
-            energy=request.energy
-        )
-        return {"status": "retry set", "message": message}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/note")
-def note_endpoint(request: NoteRequest):
-    """Log a note to observations or complaints."""
-    try:
-        from config import OBSERVATIONS, COMPLAINTS
-        from datetime import datetime
-
-        today = datetime.now().strftime("%Y-%m-%d %H:%M")
-        entry = f"\n## {today}\n{request.note}\n"
-
-        if request.type == "complaint":
-            filepath = COMPLAINTS
-        else:
-            filepath = OBSERVATIONS
-
-        with open(filepath, 'a', encoding='utf-8') as f:
-            f.write(entry)
-
-        return {"status": "logged", "type": request.type}
+        from config import TASKS, INBOX
+        import frontmatter
+        
+        titles = []
+        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+            post = frontmatter.load(filepath)
+            title = post.metadata.get("title", "")
+            status = post.metadata.get("status", "")
+            if title and status and status != "done":
+                titles.append(title)
+        
+        return titles
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -211,26 +194,7 @@ def get_current_tasks():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/tasks/titles")
-def get_task_titles():
-    """Return task titles as a plain list for Shortcuts."""
-    try:
-        from config import TASKS, INBOX
-        import frontmatter
-        
-        titles = []
-        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
-            post = frontmatter.load(filepath)
-            title = post.metadata.get("title", "")
-            status = post.metadata.get("status", "")
-            if title and status and status != "done":
-                titles.append(title)
-        
-        return titles
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
- 
  
 @app.post("/schedule-task")
 def schedule_task_endpoint(request: ScheduleTaskRequest):
@@ -262,20 +226,6 @@ def plan_task_endpoint(request: PlanTaskRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.post("/find-slot")
-def find_slot_endpoint(request: FindSlotRequest):
-    """Find the best available slot for a given duration."""
-    try:
-        from calendar_writer import find_best_slot
-        slot = find_best_slot(request.duration_minutes)
-        if not slot:
-            return {"status": "no_slot", "message": "No available slot found today"}
-        return {"status": "found", "start": slot['start'], "end": slot['end'], 
-                "start_iso": slot['start_iso'], "end_iso": slot['end_iso']}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/complete-task")
 def complete_task_endpoint(request: CompleteTaskRequest):
     """Mark a task as complete."""
@@ -291,180 +241,21 @@ def complete_task_endpoint(request: CompleteTaskRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/whats-coming")
-def whats_coming(scope: str = "today_remaining"):
-    """
-    Return a merged, sorted view of calendar events and scheduled tasks.
- 
-    scope options:
-      - today_remaining  → from now until end of today
-      - full_today       → full day from midnight (includes past events/tasks)
-      - two_days         → rest of today + all of tomorrow
-    """
+
+@app.post("/stopping-now")
+def stopping_now_endpoint(request: StoppingNowRequest):
+    """Stopping on a task but need more time."""
     try:
-        from calendar_reader import get_all_events, parse_event_time
-        from config import TASKS, INBOX
-        import frontmatter
-        from datetime import datetime, timedelta
- 
-        now = datetime.now()
-        today_str = now.strftime("%Y-%m-%d")
-        tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
- 
-        # --- Define time window ---
-        if scope == "full_today":
-            window_start = datetime.fromisoformat(f"{today_str}T00:00:00")
-            window_end = datetime.fromisoformat(f"{today_str}T23:59:59")
-            days_ahead = 1
-        elif scope == "two_days":
-            window_start = now
-            window_end = datetime.fromisoformat(f"{tomorrow_str}T23:59:59")
-            days_ahead = 2
-        else:  # today_remaining (default)
-            window_start = now
-            window_end = datetime.fromisoformat(f"{today_str}T23:59:59")
-            days_ahead = 1
- 
-        # --- Fetch calendar events ---
-        raw_events = get_all_events(days_ahead=days_ahead)
-        items = []
- 
-        for e in raw_events:
-            if e['all_day']:
-                continue
- 
-            try:
-                start_dt = parse_event_time(e['start']).replace(tzinfo=None)
-                end_dt = parse_event_time(e['end']).replace(tzinfo=None)
-            except Exception:
-                continue
- 
-            if start_dt < window_start or start_dt > window_end:
-                continue
- 
-            items.append({
-                "type": "calendar",
-                "title": e['title'],
-                "calendar": e['calendar'],
-                "start_dt": start_dt,
-                "start": start_dt.strftime("%I:%M %p"),
-                "end": end_dt.strftime("%I:%M %p"),
-                "date": start_dt.strftime("%Y-%m-%d"),
-                "status": None,
-                "energy": None,
-                "overdue": False,
-            })
- 
-        # --- Fetch scheduled tasks ---
-        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
-            post = frontmatter.load(filepath)
-            title = post.metadata.get("title", "")
-            status = post.metadata.get("status", "")
-            scheduled_time = post.metadata.get("scheduled_time")
-            scheduled_date = post.metadata.get("scheduled_date")
- 
-            if not title or status != "scheduled" or not scheduled_time:
-                continue
- 
-            # Use scheduled_date if available, otherwise fall back to today
-            date_str = scheduled_date if scheduled_date else today_str
- 
-            try:
-                try:
-                    task_dt = datetime.strptime(
-                        f"{date_str} {scheduled_time}", "%Y-%m-%d %I:%M %p"
-                    )
-                except ValueError:
-                    task_dt = datetime.strptime(
-                        f"{date_str} {scheduled_time}", "%Y-%m-%d %H:%M"
-                    )
-            except Exception:
-                continue
- 
-            # Overdue = scheduled in the past and not done
-            overdue = task_dt < now
- 
-            # For today_remaining: include overdue tasks so they aren't invisible
-            # For other scopes: apply normal window filter
-            if scope == "today_remaining":
-                if task_dt > window_end:
-                    continue
-                # overdue tasks always included — they need attention
-            else:
-                if task_dt < window_start or task_dt > window_end:
-                    continue
- 
-            duration = post.metadata.get("duration_estimated", "")
-            energy = post.metadata.get("energy_required", "unknown")
- 
-            items.append({
-                "type": "task",
-                "title": title,
-                "calendar": None,
-                "start_dt": task_dt,
-                "start": task_dt.strftime("%I:%M %p"),
-                "end": None,
-                "date": date_str,
-                "status": status,
-                "energy": energy,
-                "duration": duration,
-                "overdue": overdue,
-            })
- 
-        # --- Sort: overdue tasks first, then chronological ---
-        items.sort(key=lambda x: (not x["overdue"], x["start_dt"]))
- 
-        # --- Strip start_dt (not JSON serializable) ---
-        for item in items:
-            del item["start_dt"]
- 
-        # --- Build plain text summary ---
-        if not items:
-            summary = "Nothing scheduled for this window. Free time."
-        else:
-            lines = []
-            current_date = None
-            showed_overdue_header = False
- 
-            for item in items:
-                # Overdue section header
-                if item["overdue"] and not showed_overdue_header:
-                    lines.append("⚠️ Overdue")
-                    showed_overdue_header = True
-                elif not item["overdue"] and showed_overdue_header and current_date is None:
-                    lines.append("")  # spacer after overdue section
- 
-                # Date header for two_days scope
-                if scope == "two_days" and not item["overdue"] and item["date"] != current_date:
-                    current_date = item["date"]
-                    label = "Today" if current_date == today_str else "Tomorrow"
-                    lines.append(f"\n── {label} ──")
- 
-                if item["type"] == "calendar":
-                    lines.append(
-                        f"📅 {item['start']} {item['title']} ({item['calendar']})"
-                    )
-                else:
-                    duration_str = f" · {item['duration']}" if item.get("duration") else ""
-                    energy_str = f" [{item['energy']}]" if item.get("energy") else ""
-                    overdue_flag = " ⚠️" if item["overdue"] else ""
-                    lines.append(
-                        f"✅ {item['start']} {item['title']}{duration_str}{energy_str}{overdue_flag}"
-                    )
- 
-            summary = "\n".join(lines).strip()
- 
-        return {
-            "scope": scope,
-            "generated_at": now.strftime("%Y-%m-%d %H:%M"),
-            "count": len(items),
-            "summary": summary,
-            "items": items
-        }
- 
+        message = stopping_now(
+            task_title=request.task_title,
+            progress=request.progress,
+            remaining=request.remaining,
+            continuation_note=request.continuation_note,
+            energy=request.energy
+        )
+        return {"status": "saved", "message": message}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
- 
 
 
 @app.post("/extend-task")
@@ -478,6 +269,319 @@ def extend_task_endpoint(request: ExtendTaskRequest):
             energy=request.energy
         )
         return {"status": "extended", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/retry")
+def retry_endpoint(request: RetryRequest):
+    """Didn't start — set a retry time."""
+    try:
+        message = retry_later(
+            task_title=request.task_title,
+            retry_time=request.retry_time,
+            retry_note=request.retry_note,
+            energy=request.energy
+        )
+        return {"status": "retry set", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/panic")
+def panic_endpoint(request: PanicRequest):
+    """Panic button — reset everything without judgment."""
+    try:
+        message = panic_button(request.reason)
+        return {"status": "reset", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/find-slot")
+def find_slot_endpoint(request: FindSlotRequest):
+    """Find the best available slot for a given duration."""
+    try:
+        from calendar_writer import find_best_slot
+        slot = find_best_slot(request.duration_minutes)
+        if not slot:
+            return {"status": "no_slot", "message": "No available slot found today"}
+        return {"status": "found", "start": slot['start'], "end": slot['end'], 
+                "start_iso": slot['start_iso'], "end_iso": slot['end_iso']}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/whats-coming")
+def whats_coming(scope: str = "today_remaining"):
+    try:
+        from calendar_reader import get_all_events, parse_event_time
+        from config import TASKS, INBOX
+        import frontmatter
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+        tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # --- Define time window ---
+        if scope == "full_today":
+            window_start = datetime.fromisoformat(f"{today_str}T00:00:00")
+            window_end = datetime.fromisoformat(f"{today_str}T23:59:59")
+            days_ahead = 1
+        elif scope == "two_days":
+            window_start = now
+            window_end = datetime.fromisoformat(f"{tomorrow_str}T23:59:59")
+            days_ahead = 2
+        else:
+            window_start = now
+            window_end = datetime.fromisoformat(f"{today_str}T23:59:59")
+            days_ahead = 1
+
+        # --- Fetch calendar events ---
+        raw_events = get_all_events(days_ahead=days_ahead)
+        items = []
+
+        for e in raw_events:
+            if e['all_day']:
+                continue
+            try:
+                start_dt = parse_event_time(e['start']).replace(tzinfo=None)
+                end_dt = parse_event_time(e['end']).replace(tzinfo=None)
+            except Exception:
+                continue
+            if start_dt < window_start or start_dt > window_end:
+                continue
+            items.append({
+                "type": "calendar",
+                "title": e['title'],
+                "calendar": e['calendar'],
+                "start_dt": start_dt,
+                "start": start_dt.strftime("%I:%M %p"),
+                "end": end_dt.strftime("%I:%M %p"),
+                "date": start_dt.strftime("%Y-%m-%d"),
+                "status": None,
+                "energy": None,
+                "overdue": False,
+            })
+
+        # --- Fetch scheduled tasks ---
+        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+            post = frontmatter.load(filepath)
+            title = post.metadata.get("title", "")
+            status = post.metadata.get("status", "")
+            scheduled_time = post.metadata.get("scheduled_time")
+            scheduled_date = post.metadata.get("scheduled_date")
+
+            if not title or status != "scheduled" or not scheduled_time:
+                continue
+
+            date_str = scheduled_date if scheduled_date else today_str
+
+            try:
+                try:
+                    task_dt = datetime.strptime(
+                        f"{date_str} {scheduled_time}", "%Y-%m-%d %I:%M %p"
+                    )
+                except ValueError:
+                    task_dt = datetime.strptime(
+                        f"{date_str} {scheduled_time}", "%Y-%m-%d %H:%M"
+                    )
+            except Exception:
+                continue
+
+            overdue = task_dt < now
+
+            if scope == "today_remaining":
+                if task_dt > window_end:
+                    continue
+            else:
+                if task_dt < window_start or task_dt > window_end:
+                    continue
+
+            duration = post.metadata.get("duration_estimated", "")
+            energy = post.metadata.get("energy_required", "unknown")
+
+            items.append({
+                "type": "task",
+                "title": title,
+                "calendar": None,
+                "start_dt": task_dt,
+                "start": task_dt.strftime("%I:%M %p"),
+                "end": None,
+                "date": date_str,
+                "status": status,
+                "energy": energy,
+                "duration": duration,
+                "overdue": overdue,
+            })
+
+        # --- Fetch planned tasks ---
+        planned_items = []
+        
+        relevant_dates = [today_str, tomorrow_str] if scope == "two_days" else [today_str]
+
+        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+            post = frontmatter.load(filepath)
+            p_title = post.metadata.get("title", "")
+            p_status = post.metadata.get("status", "")
+            p_date = post.metadata.get("planned_date")
+            if p_date:
+                p_date = str(p_date).strip()
+
+            if not p_title or not p_date or p_status in ["done", "scheduled"]:
+                continue
+            if p_date not in relevant_dates:
+                continue
+
+            planned_items.append({
+                "type": "planned",
+                "title": p_title,
+                "date": p_date,
+                "energy": post.metadata.get("energy_required", "unknown"),
+                "duration": post.metadata.get("duration_estimated", ""),
+            })
+
+        # --- Sort: overdue tasks first, then chronological ---
+        items.sort(key=lambda x: (not x["overdue"], x["start_dt"]))
+
+        # --- Strip start_dt (not JSON serializable) ---
+        for item in items:
+            del item["start_dt"]
+
+        # --- Build plain text summary ---
+        if not items and not planned_items:
+            summary = "Nothing scheduled for this window. Free time."
+        else:
+            lines = []
+            current_date = None
+            showed_overdue_header = False
+
+            for item in items:
+                if item["overdue"] and not showed_overdue_header:
+                    lines.append("⚠️ Overdue")
+                    showed_overdue_header = True
+                elif not item["overdue"] and showed_overdue_header and current_date is None:
+                    lines.append("")
+
+                if scope == "two_days" and not item["overdue"] and item["date"] != current_date:
+                    current_date = item["date"]
+                    label = "Today" if current_date == today_str else "Tomorrow"
+                    lines.append(f"\n── {label} ──")
+
+                if item["type"] == "calendar":
+                    lines.append(
+                        f"📅 {item['start']} {item['title']} ({item['calendar']})"
+                    )
+                else:
+                    duration_str = f" · {item['duration']}" if item.get("duration") else ""
+                    energy_str = f" [{item['energy']}]" if item.get("energy") else ""
+                    overdue_flag = " ⚠️" if item["overdue"] else ""
+                    lines.append(
+                        f"✅ {item['start']} {item['title']}{duration_str}{energy_str}{overdue_flag}"
+                    )
+
+            # --- Render planned tasks ---
+            if planned_items:
+                if scope == "two_days":
+                    for date in [today_str, tomorrow_str]:
+                        day_planned = [p for p in planned_items if p["date"] == date]
+                        if day_planned:
+                            label = "Today" if date == today_str else "Tomorrow"
+                            lines.append(f"\n📋 Planned — {label}")
+                            for p in day_planned:
+                                duration_str = f" · {p['duration']}" if p.get("duration") else ""
+                                energy_str = f" [{p['energy']}]" if p.get("energy") else ""
+                                lines.append(f"  📋 {p['title']}{duration_str}{energy_str}")
+                else:
+                    lines.append("\n📋 Planned (no time set)")
+                    for p in planned_items:
+                        duration_str = f" · {p['duration']}" if p.get("duration") else ""
+                        energy_str = f" [{p['energy']}]" if p.get("energy") else ""
+                        lines.append(f"  📋 {p['title']}{duration_str}{energy_str}")
+
+            summary = "\n".join(lines).strip()
+
+        return {
+            "scope": scope,
+            "generated_at": now.strftime("%Y-%m-%d %H:%M"),
+            "count": len(items) + len(planned_items),
+            "summary": summary,
+            "items": items,
+            "planned_items": planned_items
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# checkin and system observations/complaints
+
+@app.post("/checkin")
+def checkin_endpoint(request: CheckinRequest):
+    """Log what you're currently doing."""
+    try:
+        filepath = create_checkin(
+            doing=request.doing,
+            energy=request.energy,
+            slots_remaining=request.slots_remaining,
+            mood=request.mood,
+            notes=request.notes
+        )
+        return {"status": "logged", "file": str(filepath)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/note")
+def note_endpoint(request: NoteRequest):
+    """Log a note to observations or complaints."""
+    try:
+        from config import OBSERVATIONS, COMPLAINTS
+        from datetime import datetime
+
+        today = datetime.now().strftime("%Y-%m-%d %H:%M")
+        entry = f"\n## {today}\n{request.note}\n"
+
+        if request.type == "complaint":
+            filepath = COMPLAINTS
+        else:
+            filepath = OBSERVATIONS
+
+        with open(filepath, 'a', encoding='utf-8') as f:
+            f.write(entry)
+
+        return {"status": "logged", "type": request.type}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# - refinement -
+@app.post("/propose-refinements")
+def propose_refinements_endpoint():
+    """Propose refinements to core_instructions.md based on observations and complaints."""
+    try:
+        from refine import propose_refinements
+        message = propose_refinements()
+        return {"status": "proposed", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/apply-refinements")
+def apply_refinements_endpoint():
+    """Apply approved changes from pending_changes.md to core_instructions.md."""
+    try:
+        from refine import apply_refinements
+        message = apply_refinements()
+        return {"status": "applied", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/reinitialize")
+def reinitialize_endpoint():
+    """Rebuild core_instructions.md from scratch."""
+    try:
+        from refine import reinitialize_core
+        message = reinitialize_core()
+        return {"status": "reinitialized", "message": message}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
