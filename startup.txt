@@ -10,3 +10,7 @@ git push
 
 ## to get changes 
 git pull
+
+## calendar auth not working
+Remove-Item token_personal.json
+python calendar_auth.py

@@ -142,6 +142,30 @@ Tags: {', '.join(task_data.get('tags', []))}"""
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/task-details")
+def get_task_details(title: str):
+    """Return key details for a specific task by title."""
+    try:
+        from config import TASKS, INBOX
+        import frontmatter
+        from reschedule import find_task_file
+
+        filepath = find_task_file(title)
+        if not filepath:
+            raise HTTPException(status_code=404, detail=f"Task not found: {title}")
+
+        post = frontmatter.load(filepath)
+        return {
+            "title": post.metadata.get("title", ""),
+            "scheduled_time": post.metadata.get("scheduled_time"),
+            "scheduled_date": post.metadata.get("scheduled_date"),
+            "duration_estimated": post.metadata.get("duration_estimated"),
+            "energy_required": post.metadata.get("energy_required"),
+            "status": post.metadata.get("status"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/tasks/titles")
 def get_task_titles():
     """Return task titles as a plain list for Shortcuts."""
