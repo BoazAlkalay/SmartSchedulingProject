@@ -40,6 +40,8 @@ def format_tasks_for_prompt(tasks):
     if not tasks:
         return "No tasks found."
     
+    today = datetime.now().strftime("%Y-%m-%d")
+    
     formatted = []
     for task in tasks:
         m = task["metadata"]
@@ -58,9 +60,12 @@ def format_tasks_for_prompt(tasks):
   preferred days: {m.get('preferred_days', [])}
   blocked by: {m.get('blocked_by', [])}"""
         
+        if m.get('planned_date') == today:
+            entry += "\n  ⭐ PLANNED FOR TODAY — prioritize this"
+        
         if task.get('scheduling_instructions'):
             entry += f"\n  scheduling notes: {task['scheduling_instructions']}"
-            
+
         formatted.append(entry)
     
     return "\n".join(formatted)
@@ -166,6 +171,7 @@ CRITICAL RULES:
 - You MUST only suggest tasks from the task list above
 - You MUST only suggest tasks that fit within an available time slot
 - Never suggest a task longer than the available slot duration
+- Tasks marked PLANNED FOR TODAY should be prioritized in suggestions
 - If the only free slot is 30 min do not suggest a 90 min task
 - Start response directly with Option 1, no preamble
 - Suggest EXACTLY 2-3 options, never more

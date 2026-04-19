@@ -251,6 +251,84 @@ def plan_task_endpoint(request: PlanTaskRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/queue-next")
+def queue_next():
+    """
+    Find the end of the current contiguous block of scheduled tasks
+    and suggest a start time for the next task.
+    """
+    try:
+        from config import TASKS, INBOX
+        import frontmatter
+        from datetime import datetime, timedelta
+        import re
+
+        now = datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+
+        # Collect all scheduled tasks today
+        scheduled = []
+
+        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+            post = frontmatter.load(filepath)
+            status = post.metadata.get("status", "")
+            title = post.metadata.get("title", "")
+            scheduled_time = post.metadata.get("scheduled_time")
+            scheduled_date = post.metadata.get("scheduled_date", today_str)
+            duration = post.metadata.get("duration_estimated", "")
+
+            if status != "scheduled" or not scheduled_time or scheduled_date != today_str:
+                continue
+
+            try:
+                try:
+                    start_dt = datetime.strptime(
+                        f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %I:%M %p"
+                    )
+                except ValueError:
+                    start_dt = datetime.strptime(
+                        f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %H:%M"
+                    )
+            except Exception:
+                continue
+
+            # Parse duration to minutes
+            total_minutes = 0
+            hr_match = re.search(r'([\d.]+)\s*hr', duration)
+            min_match = re.search(r'(\d+)\s*min', duration)
+            if hr_match:
+                total_minutes += int(float(hr_match.group(1)) * 60)
+            if min_match:
+                total_minutes += int(min_match.group(1))
+
+            end_dt = start_dt + timedelta(minutes=total_minutes)
+            scheduled.append((start_dt, end_dt, title))
+
+        # Sort by start time
+        scheduled.sort(key=lambda x: x[0])
+
+        # Find contiguous block from now
+        # Start from now, walk forward through tasks
+        GAP_THRESHOLD = timedelta(minutes=15)
+        block_end = now
+
+        for start_dt, end_dt, title in scheduled:
+            if start_dt > block_end + GAP_THRESHOLD:
+                break  # gap too large, stop here
+            if end_dt > block_end:
+                block_end = end_dt
+
+        return {
+            "block_end": block_end.strftime("%I:%M %p"),
+            "block_end_iso": block_end.isoformat(),
+            "suggested_next_start": (block_end + timedelta(minutes=10)).strftime("%I:%M %p"),
+            "suggested_next_start_iso": (block_end + timedelta(minutes=10)).isoformat(),
+            "no_tasks": len(scheduled) == 0
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/complete-task")
 def complete_task_endpoint(request: CompleteTaskRequest):
     """Mark a task as complete."""
