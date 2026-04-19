@@ -160,6 +160,7 @@ def get_task_details(title: str):
             "scheduled_time": post.metadata.get("scheduled_time"),
             "scheduled_date": post.metadata.get("scheduled_date"),
             "duration_estimated": post.metadata.get("duration_estimated"),
+            "remaining": post.metadata.get("remaining"),
             "energy_required": post.metadata.get("energy_required"),
             "status": post.metadata.get("status"),
         }
