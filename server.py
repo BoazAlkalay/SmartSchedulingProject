@@ -646,8 +646,12 @@ def note_endpoint(request: NoteRequest):
 
         if request.type == "complaint":
             filepath = COMPLAINTS
+        elif request.type == "idea":
+            from config import IDEAS
+            filepath = IDEAS
         else:
             filepath = OBSERVATIONS
+        
 
         with open(filepath, 'a', encoding='utf-8') as f:
             f.write(entry)

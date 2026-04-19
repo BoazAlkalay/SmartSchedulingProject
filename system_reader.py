@@ -6,7 +6,8 @@ from config import (
     CONTEXT,
     OBSERVATIONS,
     COMPLAINTS,
-    SOFT_SCHEDULE
+    SOFT_SCHEDULE,
+    IDEAS
 )
 
 def read_system_file(filepath):
@@ -41,6 +42,7 @@ def load_refinement_context():
         "preferences": read_system_file(PREFERENCES),
         "observations": read_system_file(OBSERVATIONS),
         "complaints": read_system_file(COMPLAINTS),
+        "ideas": read_system_file(IDEAS),
         "context": read_system_file(CONTEXT),
         "soft_schedule": read_system_file(SOFT_SCHEDULE)
     }

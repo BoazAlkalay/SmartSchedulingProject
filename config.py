@@ -18,7 +18,8 @@ PREFERENCES = VAULT_PATH / "system/preferences.md"
 CONTEXT = VAULT_PATH / "system/context.md"
 OBSERVATIONS = VAULT_PATH / "system/observations.md"
 COMPLAINTS = VAULT_PATH / "system/complaints.md"
-SOFT_SCHEDULE = VAULT_PATH / "system/soft_schedule.md" 
+SOFT_SCHEDULE = VAULT_PATH / "system/soft_schedule.md"
+IDEAS = VAULT_PATH / "system/ideas.md" 
 
 # Task folders
 INBOX = VAULT_PATH / "inbox"
