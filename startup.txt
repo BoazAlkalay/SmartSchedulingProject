@@ -13,4 +13,5 @@ git pull
 
 ## calendar auth not working
 Remove-Item token_personal.json
+Remove-Item token_school.json
 python calendar_auth.py

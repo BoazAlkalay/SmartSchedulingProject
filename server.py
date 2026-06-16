@@ -150,12 +150,16 @@ def get_task_details(title: str):
         from config import TASKS, INBOX
         import frontmatter
         from reschedule import find_task_file
+        print(f"DEBUG task-details: looking for '{title}'")
 
         filepath = find_task_file(title)
+
+        print(f"DEBUG task-details: found {filepath}")
         if not filepath:
             raise HTTPException(status_code=404, detail=f"Task not found: {title}")
 
         post = frontmatter.load(filepath)
+        print(f"DEBUG task-details: title in frontmatter = '{post.metadata.get('title')}'")
         return {
             "title": post.metadata.get("title", ""),
             "scheduled_time": post.metadata.get("scheduled_time"),
@@ -294,6 +298,7 @@ def queue_next():
                 continue
 
             # Parse duration to minutes
+            duration = post.metadata.get("scheduled_duration") or post.metadata.get("duration_estimated", "")
             total_minutes = 0
             hr_match = re.search(r'([\d.]+)\s*hr', duration)
             min_match = re.search(r'(\d+)\s*min', duration)
@@ -321,9 +326,9 @@ def queue_next():
 
         return {
             "block_end": block_end.strftime("%I:%M %p"),
-            "block_end_iso": block_end.isoformat(),
-            "suggested_next_start": (block_end + timedelta(minutes=10)).strftime("%I:%M %p"),
-            "suggested_next_start_iso": (block_end + timedelta(minutes=10)).isoformat(),
+            "block_end_iso": block_end.strftime("%Y-%m-%dT%H:%M:%S"),
+            "suggested_next_start": (block_end + timedelta(minutes=10)).strftime("%H:%M"),
+            "suggested_next_start_iso": (block_end + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S"),
             "no_tasks": len(scheduled) == 0
         }
 
@@ -376,7 +381,7 @@ def extend_task_endpoint(request: ExtendTaskRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/delete-task")
+@app.post("/delete-task")
 def delete_task_endpoint(request: DeleteTaskRequest):
     """Delete a task file and its calendar event if one exists."""
     try:

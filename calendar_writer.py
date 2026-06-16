@@ -77,7 +77,7 @@ def create_calendar_event(
     return created['id']
 
 
-def update_task_with_event(task_title: str, event_id: str, scheduled_time: str, scheduled_date: str):
+def update_task_with_event(task_title: str, event_id: str, scheduled_time: str, scheduled_date: str, duration_minutes: int):
     """
     Update the task frontmatter with the calendar event ID, scheduled time, and scheduled date.
     Tries exact match first, then fuzzy.
@@ -93,6 +93,7 @@ def update_task_with_event(task_title: str, event_id: str, scheduled_time: str, 
             post.metadata['scheduled_time'] = scheduled_time
             post.metadata['scheduled_date'] = scheduled_date
             post.metadata['status'] = 'scheduled'
+            post.metadata['scheduled_duration'] = f"{duration_minutes}min"
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(frontmatter.dumps(post))
             print(f"Updated task: {title}")
@@ -107,6 +108,7 @@ def update_task_with_event(task_title: str, event_id: str, scheduled_time: str, 
             post.metadata['scheduled_time'] = scheduled_time
             post.metadata['scheduled_date'] = scheduled_date
             post.metadata['status'] = 'scheduled'
+            post.metadata['scheduled_duration'] = f"{duration_minutes}min"
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(frontmatter.dumps(post))
             print(f"Updated task: {title}")
@@ -189,7 +191,7 @@ def schedule_task(
     )
  
     # Update the task file
-    update_task_with_event(task_title, event_id, slot['start'], date_str)
+    update_task_with_event(task_title, event_id, slot['start'], date_str, duration_minutes)
  
     return {
         "status": "scheduled",
