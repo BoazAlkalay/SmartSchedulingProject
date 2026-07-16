@@ -29,6 +29,14 @@ function App() {
     setContextMenu({ x, y, event });
   }, []);
 
+  const handleDateClick = useCallback((dateStr) => {
+    setView("Day");
+    // Small delay to let view switch before navigating
+    setTimeout(() => {
+      calendarGridRef.current?.gotoDate(dateStr);
+    }, 50);
+  }, []);
+
   return (
     <div className="app">
       <header className="header">
@@ -71,6 +79,7 @@ function App() {
             view={view}
             onRefresh={handleRefresh}
             onContextMenu={handleContextMenu}
+            onDateClick={handleDateClick}
           />
         </section>
 

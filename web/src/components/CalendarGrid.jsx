@@ -89,7 +89,7 @@ function to24hr(timeStr) {
 }
 
 const CalendarGrid = forwardRef(function CalendarGrid(
-  { view, onContextMenu },
+  { view, onContextMenu, onDateClick },
   ref,
 ) {
   const calendarRef = useRef(null);
@@ -97,6 +97,9 @@ const CalendarGrid = forwardRef(function CalendarGrid(
   useImperativeHandle(ref, () => ({
     refresh() {
       calendarRef.current?.getApi().refetchEvents();
+    },
+    gotoDate(date) {
+      calendarRef.current?.getApi().gotoDate(date);
     },
   }));
 
@@ -182,6 +185,13 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         }}
         select={(info) => {
           console.log("selected:", info.startStr, "→", info.endStr);
+        }}
+        dateClick={(info) => {
+          if (info.view.type === "dayGridMonth") {
+            calendarRef.current?.getApi().gotoDate(info.date);
+            // Signal parent to switch to Day view
+            if (onDateClick) onDateClick(info.dateStr);
+          }
         }}
         eventDrop={async (info) => {
           const { event } = info;
