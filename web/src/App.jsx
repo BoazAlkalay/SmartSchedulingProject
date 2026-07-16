@@ -19,6 +19,7 @@ function App() {
   const [showWhatNow, setShowWhatNow] = useState(false);
   const [showCheckIn, setShowCheckIn] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
 
   const handleRefresh = useCallback(() => {
     calendarGridRef.current?.refresh();
@@ -31,7 +32,6 @@ function App() {
 
   const handleDateClick = useCallback((dateStr) => {
     setView("Day");
-    // Small delay to let view switch before navigating
     setTimeout(() => {
       calendarGridRef.current?.gotoDate(dateStr);
     }, 50);
@@ -52,16 +52,98 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="energy-bar">
-          <span className="energy-label">Energy</span>
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div
-              key={i}
-              className={i <= energy ? "energy-pip filled" : "energy-pip"}
-              onClick={() => setEnergy(i)}
-              style={{ cursor: "pointer" }}
-            />
-          ))}
+
+        <div
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          }}
+        >
+          <div className="admin-dropdown-wrapper">
+            <button
+              className="btn-ghost"
+              onClick={() => setShowAdmin(!showAdmin)}
+              style={{ fontSize: "16px", padding: "4px 8px" }}
+            >
+              ⚙️
+            </button>
+            {showAdmin && (
+              <>
+                <div
+                  className="context-overlay"
+                  onClick={() => setShowAdmin(false)}
+                />
+                <div className="admin-dropdown">
+                  <div className="context-title">Admin</div>
+                  <button
+                    onClick={async () => {
+                      setShowAdmin(false);
+                      const res = await fetch(`${API}/propose-refinements`, {
+                        method: "POST",
+                      });
+                      const data = await res.json();
+                      alert(data.message);
+                    }}
+                  >
+                    📝 Propose Refinements
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowAdmin(false);
+                      const res = await fetch(`${API}/apply-refinements`, {
+                        method: "POST",
+                      });
+                      const data = await res.json();
+                      alert(data.message);
+                    }}
+                  >
+                    ✅ Apply Refinements
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!confirm("Rebuild core instructions from scratch?"))
+                        return;
+                      setShowAdmin(false);
+                      const res = await fetch(`${API}/reinitialize`, {
+                        method: "POST",
+                      });
+                      const data = await res.json();
+                      alert(data.message);
+                    }}
+                  >
+                    🔄 Reinitialize Core
+                  </button>
+                  <div className="context-divider" />
+                  <button
+                    onClick={async () => {
+                      setShowAdmin(false);
+                      const res = await fetch(`${API}/consolidate-ideas`, {
+                        method: "POST",
+                      });
+                      const data = await res.json();
+                      alert(data.message);
+                    }}
+                  >
+                    💡 Consolidate Ideas
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="energy-bar">
+            <span className="energy-label">Energy</span>
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className={i <= energy ? "energy-pip filled" : "energy-pip"}
+                onClick={() => setEnergy(i)}
+                style={{ cursor: "pointer" }}
+              />
+            ))}
+          </div>
         </div>
       </header>
 

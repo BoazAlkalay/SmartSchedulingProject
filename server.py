@@ -840,5 +840,17 @@ def reinitialize_endpoint():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/consolidate-ideas")
+def consolidate_ideas_endpoint():
+    """Consolidate ideas.md into a structured roadmap.md."""
+    try:
+        from refine import consolidate_ideas
+
+        message = consolidate_ideas()
+        return {"status": "consolidated", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
