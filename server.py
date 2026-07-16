@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
@@ -10,6 +11,17 @@ from checkin import create_checkin
 
 app = FastAPI(title="Smart Scheduler")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://100.103.66.60:5174",
+        "http://192.168.1.157:5174",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # --- Request Models ---
 
 class WhatNowRequest(BaseModel):
@@ -60,7 +72,7 @@ class PlanTaskRequest(BaseModel):
 class FindSlotRequest(BaseModel):
     duration_minutes: int
 
-    
+
 class CompleteTaskRequest(BaseModel):
     task_title: str
     actual_duration: Optional[str] = ""
@@ -82,7 +94,7 @@ def health_check():
     """Quick check that the server is running."""
     return {"status": "ok"}
 
-    
+
 @app.post("/what-now")
 def get_what_now(request: WhatNowRequest):
     """What should I do right now?"""
@@ -214,7 +226,9 @@ def get_current_tasks():
                     "title": title,
                     "status": status,
                     "energy": post.metadata.get("energy_required", "unknown"),
-                    "file": filepath.name
+                    "file": filepath.name,
+                    "planned_date": str(post.metadata.get("planned_date", "")) or None,
+                    "duration": post.metadata.get("duration_estimated", "")
                 })
 
         return {
@@ -225,7 +239,6 @@ def get_current_tasks():
         raise HTTPException(status_code=500, detail=str(e))
 
 
- 
 @app.post("/schedule-task")
 def schedule_task_endpoint(request: ScheduleTaskRequest):
     """Find a slot and schedule a task on Google Calendar."""
@@ -466,6 +479,10 @@ def whats_coming(scope: str = "today_remaining"):
             days_ahead = 1
         elif scope == "two_days":
             window_start = now
+            window_end = datetime.fromisoformat(f"{tomorrow_str}T23:59:59")
+            days_ahead = 2
+        elif scope == "full_two_days":
+            window_start = datetime.fromisoformat(f"{today_str}T00:00:00")
             window_end = datetime.fromisoformat(f"{tomorrow_str}T23:59:59")
             days_ahead = 2
         else:

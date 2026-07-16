@@ -1,0 +1,89 @@
+/* ── Design Tokens ── */
+:root {
+  --bg:          #F7F4EE;
+  --bg-card:     #EDE9DF;
+  --ink:         #1C1A17;
+  --ink-muted:   #6B6560;
+  --green:       #3D6B4F;
+  --green-light: #EBF2ED;
+  --red:         #8B2E2E;
+  --red-light:   #F5EAEA;
+  --amber:       #C4832A;
+  --amber-light: #FDF3E3;
+  --ghost:       #A8BFD0;
+  --border:      #D6D0C4;
+
+  --font-serif: 'Spectral', Georgia, serif;
+  --font-sans:  'Inter', system-ui, sans-serif;
+
+  --radius:  6px;
+  --shadow:  0 1px 3px rgba(28, 26, 23, 0.08);
+}
+
+/* ── Reset ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  border: none;
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  transition: opacity 0.15s;
+}
+
+button:hover {
+  opacity: 0.85;
+}
+
+.btn-primary {
+  background: var(--green);
+  color: white;
+}
+
+.btn-danger {
+  background: var(--red);
+  color: white;
+}
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink);
+}
+
+input, textarea, select {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  background: white;
+  color: var(--ink);
+  outline: none;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--green);
+}

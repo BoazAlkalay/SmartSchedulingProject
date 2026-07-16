@@ -3,6 +3,13 @@ python -m venv venv
 pip install -r requirements.txt
 
 
+## Web App
+# not in venv 'deactivate'
+cd web
+npm run dev
+# not working?
+npx vite --force
+
 ## push changes
 git add .
 git commit -m "describe what you changed"
@@ -15,3 +22,5 @@ git pull
 Remove-Item token_personal.json
 Remove-Item token_school.json
 python calendar_auth.py
+
+

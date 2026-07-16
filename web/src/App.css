@@ -1,0 +1,610 @@
+/* ── App Shell ── */
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.header-title {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-right: 8px;
+}
+
+.view-switcher {
+  display: flex;
+  gap: 4px;
+}
+
+.view-switcher button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.view-switcher button.active {
+  background: var(--green);
+  color: white;
+  border-color: var(--green);
+}
+
+/* ── Energy Bar ── */
+.energy-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.energy-label {
+  font-size: 12px;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.energy-pip {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--green);
+  background: transparent;
+}
+
+.energy-pip.filled {
+  background: var(--green);
+}
+
+/* ── Main Layout ── */
+.main-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Task Pool ── */
+.task-pool {
+  width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-pool h2 {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ── Calendar Pane ── */
+.calendar-pane {
+  flex: 1;
+  overflow: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Quick Panel ── */
+.quick-panel {
+  width: 200px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.quick-panel h2 {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.quick-panel button {
+  width: 100%;
+  text-align: center;
+}
+
+/* ── Utilities ── */
+.muted {
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+/* ── Calendar Grid ── */
+.calendar-grid {
+  flex: 1;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* FullCalendar overrides */
+.fc {
+  height: 100% !important;
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+}
+
+.fc-timegrid-slot {
+  height: 20px !important;
+}
+
+.fc-event {
+  border-radius: 4px !important;
+  padding: 2px 4px !important;
+  font-size: 12px !important;
+}
+
+.fc-now-indicator-line {
+  border-color: var(--amber) !important;
+}
+
+/* ── Task Pool Cards ── */
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: grab;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.task-card:hover {
+  border-color: var(--green);
+}
+
+.task-energy-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.task-card-title {
+  color: var(--ink);
+}
+
+/* ── Energy Legend ── */
+.energy-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.energy-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-transform: capitalize;
+}
+
+.task-pool-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Context Menu ── */
+.context-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 100;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(28, 26, 23, 0.15);
+  padding: 4px;
+  min-width: 180px;
+}
+
+.context-title {
+  font-size: 11px;
+  color: var(--ink-muted);
+  padding: 6px 10px 4px;
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.context-menu button:hover {
+  background: var(--bg-card);
+}
+
+.context-menu button.danger {
+  color: var(--red);
+}
+
+.context-menu button.danger:hover {
+  background: var(--red-light);
+}
+
+.context-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.context-note {
+  font-size: 12px;
+  color: var(--ink-muted);
+  padding: 6px 10px;
+}
+
+/* ── Mobile Layout ── */
+
+/* Hide tab bar on desktop by default */
+.mobile-tabs {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .app {
+    height: 100dvh;
+  }
+
+
+  .main-layout {
+    flex-direction: column;
+    position: relative;
+  }
+
+  .task-pool {
+    display: none;
+    width: 100%;
+    border-right: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .quick-panel {
+    display: none;
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .calendar-pane {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .task-pool.mobile-active,
+  .quick-panel.mobile-active {
+    display: flex;
+  }
+
+  .mobile-tabs {
+    display: flex;
+    border-top: 1px solid var(--border);
+    background: var(--bg-card);
+    flex-shrink: 0;
+  }
+
+  .mobile-tab {
+    flex: 1;
+    padding: 10px 0;
+    text-align: center;
+    font-size: 11px;
+    color: var(--ink-muted);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .mobile-tab.active {
+    color: var(--green);
+  }
+
+  .mobile-tab-icon {
+    font-size: 18px;
+  }
+
+  .energy-legend {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+  
+  .energy-legend-item {
+    font-size: 10px;
+  }
+  
+  .task-pool.mobile-active {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  
+  .quick-panel.mobile-active {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+}
+
+.task-scheduled-badge {
+  font-size: 8px;
+  color: var(--green);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.task-scheduled-badge {
+  font-size: 8px;
+  color: var(--green);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.task-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 0 4px;
+  margin-top: 4px;
+}
+
+.task-scheduled-badge {
+  font-size: 8px;
+  color: var(--green);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── Modal ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(28, 26, 23, 0.4);
+  z-index: 200;
+}
+
+.modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 201;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(28, 26, 23, 0.2);
+  width: 480px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.modal-title {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  font-size: 14px;
+  color: var(--ink-muted);
+  padding: 4px 8px;
+}
+
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--ink-muted);
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border);
+  border-top-color: var(--green);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.what-now-response {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: var(--ink);
+  margin: 0;
+}
+
+.what-now-inline {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.what-now-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.what-now-content {
+  width: 100%;
+}
+
+/* ── Check In Form ── */
+.checkin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  width: 100%;
+}
+
+.form-field textarea {
+  resize: vertical;
+  min-height: 70px;
+}
+
+.optional {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+/* ── Add Task ── */
+.task-preview {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-row {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.preview-label {
+  color: var(--ink-muted);
+  width: 70px;
+  flex-shrink: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 1px;
+}
+
+.preview-value {
+  color: var(--ink);
+}
+
+.add-task-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.add-task-buttons button {
+  flex: 1;
+  min-width: 100px;
+  font-size: 12px;
+}
