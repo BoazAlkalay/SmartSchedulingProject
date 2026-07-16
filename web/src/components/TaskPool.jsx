@@ -24,7 +24,24 @@ function EnergyLegend() {
   );
 }
 
+function deadlineUrgency(deadline) {
+  if (!deadline || deadline === "None") return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(deadline);
+  due.setHours(0, 0, 0, 0);
+  const days = Math.round((due - today) / 86400000);
+  if (days < 0) return { label: "Overdue", color: "#8B2E2E", days };
+  if (days === 0) return { label: "Due today", color: "#8B2E2E", days };
+  if (days === 1) return { label: "Due tomorrow", color: "#C4832A", days };
+  if (days <= 3) return { label: `Due in ${days}d`, color: "#C4832A", days };
+  if (days <= 7) return { label: `Due in ${days}d`, color: "#D4A843", days };
+  return { label: `Due in ${days}d`, color: "#6B6560", days };
+}
+
 function TaskCard({ task, onTouchStart, onTouchEnd }) {
+  const urgency = deadlineUrgency(task.deadline);
+
   return (
     <div
       className="task-card"
@@ -39,7 +56,17 @@ function TaskCard({ task, onTouchStart, onTouchEnd }) {
         className="task-energy-dot"
         style={{ background: ENERGY_COLORS[task.energy] || "#ccc" }}
       />
-      <span className="task-card-title">{task.title}</span>
+      <div className="task-card-body">
+        <span className="task-card-title">{task.title}</span>
+        {urgency && (
+          <span
+            className="task-deadline-badge"
+            style={{ color: urgency.color }}
+          >
+            {urgency.label}
+          </span>
+        )}
+      </div>
       {task.status === "scheduled" && (
         <span className="task-scheduled-badge">●</span>
       )}
@@ -47,10 +74,23 @@ function TaskCard({ task, onTouchStart, onTouchEnd }) {
   );
 }
 
+function sortByUrgency(tasks) {
+  return [...tasks].sort((a, b) => {
+    const ua = deadlineUrgency(a.deadline);
+    const ub = deadlineUrgency(b.deadline);
+    // No deadline goes to bottom
+    if (!ua && !ub) return 0;
+    if (!ua) return 1;
+    if (!ub) return -1;
+    return ua.days - ub.days;
+  });
+}
+
 export default function TaskPool({ onRefresh }) {
   const [tasks, setTasks] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [taskMenu, setTaskMenu] = React.useState(null);
+  const [filter, setFilter] = React.useState("all");
   const containerRef = useRef(null);
   const longPressTimer = useRef(null);
 
@@ -77,8 +117,14 @@ export default function TaskPool({ onRefresh }) {
           .map((t) => ({
             ...t,
             planned_date: t.planned_date === "None" ? null : t.planned_date,
+            deadline: t.deadline === "None" ? null : t.deadline,
             durationMinutes: parseDurationToMinutes(t.duration),
-          }));
+          }))
+          // Hide tasks whose planned_date is in the future
+          .filter((t) => {
+            if (!t.planned_date) return true;
+            return t.planned_date <= todayStr;
+          });
         setTasks(filtered);
         setLoading(false);
       })
@@ -208,7 +254,7 @@ export default function TaskPool({ onRefresh }) {
 
   async function handleTaskPlan(task) {
     const date = prompt(
-      `Plan for which date? (YYYY-MM-DD)\nToday is ${todayStr}`,
+      `Plan for which date?\n(e.g. today, tomorrow, this thursday, ${todayStr})`,
     );
     if (!date) return;
     setTaskMenu(null);
@@ -246,17 +292,67 @@ export default function TaskPool({ onRefresh }) {
     refreshAll();
   }
 
-  const todayPlanned = tasks.filter(
-    (t) => t.planned_date === todayStr && t.status !== "scheduled",
+  // Apply filter
+  function applyFilter(taskList) {
+    switch (filter) {
+      case "due_soon":
+        return taskList.filter((t) => {
+          const u = deadlineUrgency(t.deadline);
+          return u && u.days <= 7;
+        });
+      case "focused":
+        return taskList.filter((t) => {
+          const u = deadlineUrgency(t.deadline);
+          const dueSoon = u && u.days <= 3;
+          const highPriority =
+            t.priority === "high" || t.priority === "critical";
+          const plannedToday = t.planned_date === todayStr;
+          return dueSoon || highPriority || plannedToday;
+        });
+      default:
+        return taskList;
+    }
+  }
+
+  // Split and sort
+  const todayPlanned = sortByUrgency(
+    applyFilter(
+      tasks.filter(
+        (t) => t.planned_date === todayStr && t.status !== "scheduled",
+      ),
+    ),
   );
-  const scheduled = tasks.filter((t) => t.status === "scheduled");
-  const unscheduled = tasks.filter(
-    (t) => t.status !== "scheduled" && t.planned_date !== todayStr,
+  const scheduled = sortByUrgency(
+    applyFilter(tasks.filter((t) => t.status === "scheduled")),
+  );
+  const unscheduled = sortByUrgency(
+    applyFilter(
+      tasks.filter(
+        (t) => t.status !== "scheduled" && t.planned_date !== todayStr,
+      ),
+    ),
   );
 
   return (
     <div className="task-pool-inner">
       <EnergyLegend />
+
+      {/* Filter bar */}
+      <div className="task-filter-bar">
+        {[
+          { key: "all", label: "All" },
+          { key: "due_soon", label: "Due This Week" },
+          { key: "focused", label: "Focused" },
+        ].map((f) => (
+          <button
+            key={f.key}
+            className={`task-filter-btn ${filter === f.key ? "active" : ""}`}
+            onClick={() => setFilter(f.key)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
 
       <div className="task-list" ref={containerRef}>
         {loading && <p className="muted">Loading...</p>}
@@ -303,9 +399,12 @@ export default function TaskPool({ onRefresh }) {
           </>
         )}
 
-        {!loading && tasks.length === 0 && (
-          <p className="muted">No tasks found.</p>
-        )}
+        {!loading &&
+          todayPlanned.length === 0 &&
+          scheduled.length === 0 &&
+          unscheduled.length === 0 && (
+            <p className="muted">No tasks match this filter.</p>
+          )}
       </div>
 
       {taskMenu && (

@@ -40,7 +40,14 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <span className="header-title">SmartScheduler</span>
+        <span
+          className="header-title"
+          onClick={handleRefresh}
+          style={{ cursor: "pointer" }}
+          title="Click to refresh"
+        >
+          SmartScheduler
+        </span>
         <nav className="view-switcher">
           {["Day", "3 Day", "Week", "Month"].map((v) => (
             <button
@@ -52,6 +59,27 @@ function App() {
             </button>
           ))}
         </nav>
+
+        <div className="nav-controls">
+          <button
+            className="btn-ghost"
+            onClick={() => calendarGridRef.current?.prev()}
+          >
+            ‹
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => calendarGridRef.current?.today()}
+          >
+            Today
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => calendarGridRef.current?.next()}
+          >
+            ›
+          </button>
+        </div>
 
         <div
           style={{
@@ -156,6 +184,28 @@ function App() {
         </aside>
 
         <section className="calendar-pane">
+          {/* Mobile nav controls */}
+          <div className="mobile-calendar-nav">
+            <button
+              className="btn-ghost"
+              onClick={() => calendarGridRef.current?.prev()}
+            >
+              ‹
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={() => calendarGridRef.current?.today()}
+            >
+              Today
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={() => calendarGridRef.current?.next()}
+            >
+              ›
+            </button>
+          </div>
+
           <CalendarGrid
             ref={calendarGridRef}
             view={view}

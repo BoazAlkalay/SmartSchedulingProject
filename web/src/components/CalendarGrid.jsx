@@ -1,4 +1,10 @@
-import { useRef, useImperativeHandle, forwardRef } from "react";
+import {
+  useRef,
+  useImperativeHandle,
+  forwardRef,
+  useEffect,
+  useState,
+} from "react";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -79,6 +85,7 @@ function itemToFCEvent(item) {
     };
   }
 }
+
 function to24hr(timeStr) {
   if (!timeStr) return "00:00:00";
   const [time, meridiem] = timeStr.split(" ");
@@ -93,6 +100,7 @@ const CalendarGrid = forwardRef(function CalendarGrid(
   ref,
 ) {
   const calendarRef = useRef(null);
+  const [currentDateLabel, setCurrentDateLabel] = useState("");
 
   useImperativeHandle(ref, () => ({
     refresh() {
@@ -101,24 +109,46 @@ const CalendarGrid = forwardRef(function CalendarGrid(
     gotoDate(date) {
       calendarRef.current?.getApi().gotoDate(date);
     },
+    changeView(viewName) {
+      calendarRef.current?.getApi().changeView(viewName);
+    },
+    getCurrentDate() {
+      return calendarRef.current?.getApi().getDate();
+    },
+    prev() {
+      calendarRef.current?.getApi().prev();
+    },
+    next() {
+      calendarRef.current?.getApi().next();
+    },
+    today() {
+      calendarRef.current?.getApi().today();
+    },
   }));
 
-  const viewMap = {
-    Day: "timeGridDay",
-    "3 Day": "timeGridThreeDay",
-    Week: "timeGridWeek",
-    Month: "dayGridMonth",
-  };
-
-  const fcView = viewMap[view] || "timeGridDay";
+  useEffect(() => {
+    if (!calendarRef.current) return;
+    const api = calendarRef.current.getApi();
+    if (api) {
+      const viewMap = {
+        Day: "timeGridDay",
+        "3 Day": "timeGridThreeDay",
+        Week: "timeGridWeek",
+        Month: "dayGridMonth",
+      };
+      api.changeView(viewMap[view] || "timeGridDay");
+    }
+  }, [view]);
 
   return (
     <div className="calendar-grid">
+      {currentDateLabel && (
+        <div className="calendar-date-label">{currentDateLabel}</div>
+      )}
       <FullCalendar
         ref={calendarRef}
         plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-        initialView={fcView}
-        key={fcView}
+        initialView="timeGridDay"
         views={{
           timeGridThreeDay: {
             type: "timeGrid",
@@ -136,6 +166,41 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         editable={true}
         selectable={true}
         droppable={true}
+        datesSet={(info) => {
+          const start = info.start;
+          const viewType = info.view.type;
+          if (viewType === "dayGridMonth") {
+            setCurrentDateLabel(
+              start.toLocaleString("default", {
+                month: "long",
+                year: "numeric",
+              }),
+            );
+          } else if (viewType === "timeGridDay") {
+            setCurrentDateLabel(
+              start.toLocaleString("default", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              }),
+            );
+          } else if (
+            viewType === "timeGridWeek" ||
+            viewType === "timeGridThreeDay"
+          ) {
+            const end = new Date(info.end);
+            end.setDate(end.getDate() - 1);
+            const startStr = start.toLocaleString("default", {
+              month: "long",
+              day: "numeric",
+            });
+            const endStr = end.toLocaleString("default", {
+              day: "numeric",
+              year: "numeric",
+            });
+            setCurrentDateLabel(`${startStr} – ${endStr}`);
+          }
+        }}
         scrollTime={(() => {
           const d = new Date(Date.now() - 5 * 60 * 1000);
           return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:00`;
@@ -153,13 +218,11 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         eventDidMount={(info) => {
           const el = info.el;
 
-          // Desktop: right-click
           el.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             onContextMenu(e.clientX, e.clientY, info.event);
           });
 
-          // Mobile: long press
           let longPressTimer = null;
 
           el.addEventListener("touchstart", (e) => {
@@ -189,7 +252,6 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         dateClick={(info) => {
           if (info.view.type === "dayGridMonth") {
             calendarRef.current?.getApi().gotoDate(info.date);
-            // Signal parent to switch to Day view
             if (onDateClick) onDateClick(info.dateStr);
           }
         }}
@@ -266,7 +328,6 @@ const CalendarGrid = forwardRef(function CalendarGrid(
           }
         }}
         eventReceive={async (info) => {
-          console.log("eventReceive fired:", info.event.title);
           const { event } = info;
           const title = event.extendedProps.title;
           const start = event.start;
@@ -292,7 +353,6 @@ const CalendarGrid = forwardRef(function CalendarGrid(
               }),
             });
             const data = await res.json();
-            console.log("schedule result:", data);
             if (data.status === "scheduled") {
               setTimeout(() => {
                 calendarRef.current?.getApi().refetchEvents();

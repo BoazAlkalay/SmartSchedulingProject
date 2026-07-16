@@ -256,6 +256,8 @@ def get_current_tasks():
                         "planned_date": str(post.metadata.get("planned_date", ""))
                         or None,
                         "duration": post.metadata.get("duration_estimated", ""),
+                        "deadline": str(post.metadata.get("deadline", "")) or None,
+                        "priority": post.metadata.get("priority", "medium"),
                     }
                 )
 
@@ -295,16 +297,57 @@ def unschedule_task_endpoint(request: UnscheduleTaskRequest):
 
 @app.post("/plan-task")
 def plan_task_endpoint(request: PlanTaskRequest):
-    """
-    assign a planned date to a task without scheduling a specific time
-    """
     try:
-        from reschedule import plan_task
+        from reschedule import plan_task, parse_retry_time
+        from datetime import datetime
 
-        message = plan_task(
-            task_title=request.task_title, planned_date=request.planned_date
-        )
-        return {"status": "planned", "message": message}
+        # Parse natural language date
+        raw = request.planned_date.strip().lower()
+
+        # Try direct YYYY-MM-DD first
+        try:
+            datetime.strptime(raw, "%Y-%m-%d")
+            parsed_date = raw
+        except ValueError:
+            # Use natural language parsing
+            now = datetime.now()
+            if raw in ("today", "now"):
+                parsed_date = now.strftime("%Y-%m-%d")
+            elif raw == "tomorrow":
+                from datetime import timedelta
+
+                parsed_date = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+            else:
+                # Handle "this thursday", "next monday" etc
+                day_names = [
+                    "monday",
+                    "tuesday",
+                    "wednesday",
+                    "thursday",
+                    "friday",
+                    "saturday",
+                    "sunday",
+                ]
+                found = None
+                for i, day in enumerate(day_names):
+                    if day in raw:
+                        found = i
+                        break
+                if found is not None:
+                    days_ahead = (found - now.weekday()) % 7
+                    if days_ahead == 0:
+                        days_ahead = 7
+                    from datetime import timedelta
+
+                    parsed_date = (now + timedelta(days=days_ahead)).strftime(
+                        "%Y-%m-%d"
+                    )
+                else:
+                    # Fall back to raw string
+                    parsed_date = raw
+
+        message = plan_task(task_title=request.task_title, planned_date=parsed_date)
+        return {"status": "planned", "message": message, "date": parsed_date}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

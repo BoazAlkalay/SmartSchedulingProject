@@ -512,7 +512,7 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
     elif "month" in recurrence_lower:
         match = re.search(r"(\d+)", recurrence_lower)
         months = int(match.group(1)) if match else 1
-        days = months * 30  # approximate
+        days = months * 30
     elif "biweekly" in recurrence_lower or "bi-weekly" in recurrence_lower:
         days = 14
     elif "fortnight" in recurrence_lower:
@@ -526,7 +526,11 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
     next_due = datetime.now() + timedelta(days=days)
     next_due_str = next_due.strftime("%Y-%m-%d")
 
-    # Build new task data from existing task
+    # Does this task have a hard deadline or is it flexible?
+    original_deadline = post.metadata.get("deadline")
+    has_hard_deadline = original_deadline is not None
+
+    # Build new task metadata
     new_metadata = dict(post.metadata)
     new_metadata["status"] = "unscheduled"
     new_metadata["progress"] = "0%"
@@ -535,30 +539,41 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
     new_metadata["calendar_event_id"] = None
     new_metadata["scheduled_time"] = None
     new_metadata["scheduled_date"] = None
-    new_metadata["planned_date"] = None
+    new_metadata["scheduled_duration"] = None
     new_metadata["retry_at"] = None
     new_metadata["retry_note"] = None
     new_metadata["continuation_note"] = None
     new_metadata["times_deferred"] = 0
     new_metadata["duration_actual"] = None
-    new_metadata["deadline"] = next_due_str
     new_metadata["created"] = datetime.now().strftime("%Y-%m-%d")
+
+    if has_hard_deadline:
+        # Deadline-driven recurring task — set deadline and planned_date to next due
+        new_metadata["deadline"] = next_due_str
+        new_metadata["planned_date"] = next_due_str
+        # Keep original priority
+    else:
+        # Flexible recurring task — snooze until interval passes, mark low priority
+        new_metadata["deadline"] = None
+        new_metadata["planned_date"] = next_due_str  # snooze until due
+        new_metadata["priority"] = "low"
 
     # Write new task file in same folder as original
     destination = original_filepath.parent
-    new_post = frontmatter.Post(post.content, **new_metadata)
-
     new_filepath = destination / original_filepath.name
-    # Handle collision
+
     counter = 2
     while new_filepath.exists():
         new_filepath = destination / f"{original_filepath.stem}_{counter}.md"
         counter += 1
 
+    new_post = frontmatter.Post(post.content, **new_metadata)
     with open(new_filepath, "w", encoding="utf-8") as f:
         f.write(frontmatter.dumps(new_post))
 
-    print(f"Spawned next recurrence: {new_filepath.name} (due {next_due_str})")
+    print(
+        f"Spawned next recurrence: {new_filepath.name} (due {next_due_str}, {'deadline-driven' if has_hard_deadline else 'flexible/low priority'})"
+    )
 
 
 def unschedule_task(task_title: str) -> str:
