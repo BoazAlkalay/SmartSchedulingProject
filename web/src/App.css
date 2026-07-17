@@ -774,3 +774,124 @@
     text-align: center;
   }
 }
+
+.task-card.in-progress {
+  border-left: 3px solid #7B5EA7;
+}
+
+.task-progress-badge {
+  font-size: 10px;
+  color: #7B5EA7;
+  font-weight: 500;
+  margin-top: 1px;
+}
+
+/* ── Add Task Grid Buttons ── */
+.add-task-buttons-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.add-task-buttons-grid button {
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+/* ── Edit Link ── */
+.edit-link {
+  background: transparent;
+  border: none;
+  color: var(--ink-muted);
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  width: auto;
+}
+
+.edit-link:hover {
+  color: var(--green);
+}
+
+/* ── Schedule At Form ── */
+.schedule-at-form {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Calendar Header Row ── */
+.calendar-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Color Key ── */
+.color-key-wrapper {
+  position: relative;
+}
+
+.color-key-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--ink-muted);
+  font-size: 11px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.color-key-btn:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.color-key-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 100;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(28,26,23,0.15);
+  padding: 10px 12px;
+  min-width: 200px;
+}
+
+.color-key-title {
+  font-family: var(--font-serif);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--ink);
+}
+
+.color-key-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink);
+  padding: 3px 0;
+}
+
+.color-key-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

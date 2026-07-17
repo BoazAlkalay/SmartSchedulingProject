@@ -147,7 +147,11 @@ def add_task_endpoint(request: AddTaskRequest):
             }
 
         filepath = create_task_file(task_data)
-        return {"status": "created", "file": str(filepath)}
+        return {
+            "status": "created",
+            "file": str(filepath),
+            "title": task_data.get("title", "").replace("_", " ").strip(),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -258,6 +262,7 @@ def get_current_tasks():
                         "duration": post.metadata.get("duration_estimated", ""),
                         "deadline": str(post.metadata.get("deadline", "")) or None,
                         "priority": post.metadata.get("priority", "medium"),
+                        "progress": post.metadata.get("progress", ""),
                     }
                 )
 
@@ -634,7 +639,11 @@ def whats_coming(scope: str = "today_remaining"):
             scheduled_time = post.metadata.get("scheduled_time")
             scheduled_date = post.metadata.get("scheduled_date")
 
-            if not title or status != "scheduled" or not scheduled_time:
+            if (
+                not title
+                or status not in ["scheduled", "in-progress"]
+                or not scheduled_time
+            ):
                 continue
 
             date_str = scheduled_date if scheduled_date else today_str
@@ -651,7 +660,24 @@ def whats_coming(scope: str = "today_remaining"):
             except Exception:
                 continue
 
-            overdue = task_dt < now
+            # Calculate end time based on duration
+            import re
+
+            total_minutes = 0
+            dur = post.metadata.get("scheduled_duration") or post.metadata.get(
+                "duration_estimated", ""
+            )
+            hr_match = re.search(r"([\d.]+)\s*hr", str(dur))
+            min_match = re.search(r"(\d+)\s*min", str(dur))
+            if hr_match:
+                total_minutes += int(float(hr_match.group(1)) * 60)
+            if min_match:
+                total_minutes += int(min_match.group(1))
+            if total_minutes == 0:
+                total_minutes = 60
+
+            task_end_dt = task_dt + timedelta(minutes=total_minutes)
+            overdue = task_end_dt < now
 
             if scope == "today_remaining":
                 if task_dt > window_end:

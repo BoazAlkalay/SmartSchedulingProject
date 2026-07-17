@@ -238,7 +238,7 @@ def schedule_task(
 ) -> dict:
     """
     Main function — find a slot, create calendar event, update task file.
-    preferred_start: time string e.g. "9:00 AM"
+    preferred_start: time string e.g. "9:00 AM", "14:00", or natural language like "9pm"
     preferred_date: date string e.g. "2026-04-08", defaults to today
     """
     print("DEBUG: schedule_task called with preferred_start/preferred_date")
@@ -248,14 +248,32 @@ def schedule_task(
     # Use preferred start time if provided
     if preferred_start:
         try:
-            try:
-                start = datetime.strptime(
-                    f"{date_str} {preferred_start}", "%Y-%m-%d %I:%M %p"
-                )
-            except ValueError:
-                start = datetime.strptime(
-                    f"{date_str} {preferred_start}", "%Y-%m-%d %H:%M"
-                )
+            # Try standard formats first
+            parsed_start = None
+            for fmt in [
+                "%Y-%m-%d %I:%M %p",
+                "%Y-%m-%d %H:%M",
+                "%Y-%m-%d %I:%M%p",
+                "%Y-%m-%d %I %p",
+            ]:
+                try:
+                    parsed_start = datetime.strptime(
+                        f"{date_str} {preferred_start}", fmt
+                    )
+                    break
+                except ValueError:
+                    continue
+
+            # Fall back to natural language parsing
+            if not parsed_start:
+                from reschedule import parse_retry_time
+
+                parsed_str = parse_retry_time(f"{preferred_start} today")
+                parsed_start = datetime.strptime(parsed_str, "%Y-%m-%d %H:%M")
+                # Update date_str to match the parsed date (e.g. "tomorrow 10am" → tomorrow's date)
+                date_str = parsed_start.strftime("%Y-%m-%d")
+
+            start = parsed_start
             end = start + timedelta(minutes=duration_minutes)
             slot = {
                 "start": start.strftime("%I:%M %p"),
@@ -263,10 +281,10 @@ def schedule_task(
                 "start_iso": start.isoformat(),
                 "end_iso": end.isoformat(),
             }
-        except ValueError:
+        except Exception as e:
             return {
                 "status": "error",
-                "message": f"Could not parse time: {preferred_start}",
+                "message": f"Could not parse time: {preferred_start} ({e})",
             }
     else:
         # Auto-find best slot (today only)
@@ -310,6 +328,32 @@ def schedule_task(
         "event_id": event_id,
         "message": f"Scheduled '{task_title}' for {date_str} from {slot['start']} to {slot['end']}",
     }
+
+
+def truncate_calendar_event(event_id: str) -> bool:
+    """
+    Update a calendar event's end time to now, truncating it.
+    Used when stopping a task mid-way.
+    """
+    try:
+        service = get_personal_service()
+        now = datetime.now()
+
+        # Get the existing event
+        event = service.events().get(calendarId="primary", eventId=event_id).execute()
+
+        # Update end time to now
+        event["end"] = {"dateTime": now.isoformat(), "timeZone": "America/New_York"}
+
+        service.events().update(
+            calendarId="primary", eventId=event_id, body=event
+        ).execute()
+
+        print(f"Truncated calendar event: {event_id} to {now.strftime('%I:%M %p')}")
+        return True
+    except Exception as e:
+        print(f"Could not truncate event {event_id}: {e}")
+        return False
 
 
 if __name__ == "__main__":

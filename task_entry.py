@@ -4,21 +4,19 @@ import frontmatter
 from pathlib import Path
 from datetime import datetime, timezone
 from llm import ask
-from config import (
-    INBOX,
-    TASKS,
-    RUNTIME_MODEL
-)
+from config import INBOX, TASKS, RUNTIME_MODEL
+
 
 def clean_json_response(text: str) -> str:
     """
     strip markdown code fenses if the LLM wraps its JSON in them.
     """
     text = text.strip()
-    text = re.sub(r'^```json\s*', '', text)
-    text = re.sub(r'^```\s*', '', text)
-    text = re.sub(r'```$', '', text)
+    text = re.sub(r"^```json\s*", "", text)
+    text = re.sub(r"^```\s*", "", text)
+    text = re.sub(r"```$", "", text)
     return text.strip()
+
 
 def title_exists(title: str) -> bool:
     """
@@ -30,6 +28,7 @@ def title_exists(title: str) -> bool:
             return True
     return False
 
+
 def parse_task_from_text(raw_text: str) -> dict:
     """
     takes natural language input and returns a structured task dictionary.
@@ -39,7 +38,7 @@ def parse_task_from_text(raw_text: str) -> dict:
     today = now.strftime("%Y-%m-%d")
     day_of_week = now.strftime("%A").lower()
     current_time = now.strftime("%H:%M")
-    
+
     prompt = f"""
 Today is {today} ({day_of_week}) and the current time is {current_time}.
 When the user says "today" the deadline is exactly {today}.
@@ -53,7 +52,7 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "priority": "low, medium, high, or critical",
     "deadline": "YYYY-MM-DD or null",
     "planned_date": "YYYY-MM-DD or null",
-    "recurrence": "e.g. every week or null",
+    "recurrence": "preserve exact frequency e.g. 'every week', 'twice a day', 'every 3 days', 'on mondays and wednesdays', or null",
     "energy_required": "cantrip, low, medium, high, or deep",
     "slot_level": 0-9,
     "preferred_days": ["monday", "wednesday"] or [],
@@ -78,7 +77,6 @@ Input: {raw_text}
         print(f"Failed to parse LLM response as JSON: {e}")
         print(f"Raw response: {response}")
         return None
-    
 
 
 def create_task_file(task_data: dict, destination: Path = None) -> Path:
@@ -96,7 +94,7 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
             # Normalize: strip leading "tasks/" if present, then re-root under TASKS
             # This prevents rogue folders at vault root if LLM omits "tasks/" prefix
             if folder_path.startswith("tasks/"):
-                folder_path = folder_path[len("tasks/"):]
+                folder_path = folder_path[len("tasks/") :]
             destination = TASKS / folder_path
 
     # make sure folder exists
@@ -104,7 +102,7 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
 
     # create filename from title
     title = task_data.get("title", "untitled task")
-    
+
     # Normalize: replace underscores with spaces, title-case
     title = title.replace("_", " ").strip()
 
@@ -114,9 +112,10 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
         print("Creating anyway — check your vault for duplicates.")
 
     import re
-    safe_title = re.sub(r'[^\w\s]', '', title.lower())
+
+    safe_title = re.sub(r"[^\w\s]", "", title.lower())
     safe_title = safe_title.replace(" ", "_")
-    safe_title = re.sub(r'_+', '_', safe_title)
+    safe_title = re.sub(r"_+", "_", safe_title)
     filename = f"{safe_title}.md"
     filepath = destination / filename
 
@@ -150,51 +149,52 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
         "preferred_time": task_data.get("preferred_time"),
         "preferred_days": task_data.get("preferred_days", []),
         "tags": task_data.get("tags", []),
-        "created": datetime.now().strftime("%Y-%m-%d")
+        "created": datetime.now().strftime("%Y-%m-%d"),
     }
 
     # Build notes content
     notes_content = task_data.get("notes", "")
     scheduling_instructions = task_data.get("scheduling_instructions", "")
 
-
     content = "## Notes\n"
     if notes_content:
         content += f"{notes_content}\n"
-    
+
     if scheduling_instructions:
         content += f"\n## Scheduling Instructions\n{scheduling_instructions}\n"
 
-    
     # Write the file
     post = frontmatter.Post(content, **metadata)
-    with open(filepath, 'w', encoding='utf-8') as f:
+    with open(filepath, "w", encoding="utf-8") as f:
         f.write(frontmatter.dumps(post))
-    
+
     print(f"Task created: {filepath}")
     return filepath
+
 
 def add_task(raw_text: str) -> Path:
     """
     Main function — takes natural language and creates a task file.
     """
     print(f"Parsing: '{raw_text}'")
-    
+
     task_data = parse_task_from_text(raw_text)
-    
+
     if task_data is None:
         print("Failed to parse task. Please try again.")
         return None
-    
+
     print(f"\nParsed task:")
     print(f"  Title: {task_data.get('title')}")
     print(f"  Priority: {task_data.get('priority')}")
-    print(f"  Energy: {task_data.get('energy_required')} (slot {task_data.get('slot_level')})")
+    print(
+        f"  Energy: {task_data.get('energy_required')} (slot {task_data.get('slot_level')})"
+    )
     print(f"  Duration: {task_data.get('duration_estimated')}")
     print(f"  Deadline: {task_data.get('deadline')}")
     print(f"  Folder: {task_data.get('folder')}")
     print(f"  Tags: {task_data.get('tags')}")
-    
+
     filepath = create_task_file(task_data)
     return filepath
 
@@ -202,10 +202,14 @@ def add_task(raw_text: str) -> Path:
 if __name__ == "__main__":
     # Test with a few different natural language inputs
     print("=== Test 1 ===")
-    add_task("read chapter 4 of text as data textbook, due thursday, medium energy, about 45 minutes")
-    
+    add_task(
+        "read chapter 4 of text as data textbook, due thursday, medium energy, about 45 minutes"
+    )
+
     print("\n=== Test 2 ===")
     add_task("schedule laundry sometime this weekend, low energy, 30 minutes")
-    
+
     print("\n=== Test 3 ===")
-    add_task("prep for monday social networks class, high energy, need about an hour, prefer sunday morning")
+    add_task(
+        "prep for monday social networks class, high energy, need about an hour, prefer sunday morning"
+    )

@@ -11,6 +11,7 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
   const [retryTime, setRetryTime] = React.useState("");
   const [extendMinutes, setExtendMinutes] = React.useState(15);
   const [submitting, setSubmitting] = React.useState(false);
+  const [remaining, setRemaining] = React.useState("");
 
   if (!event) return null;
 
@@ -36,7 +37,7 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
       body: JSON.stringify({
         task_title: title,
         progress,
-        remaining: "",
+        remaining,
         continuation_note: continuationNote,
       }),
     });
@@ -138,6 +139,17 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
                 <option value="90%">90%</option>
                 <option value="Almost done">Almost done</option>
               </select>
+            </div>
+            <div className="form-field">
+              <label>
+                Time remaining <span className="optional">(optional)</span>
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. 30min, 1hr"
+                value={remaining}
+                onChange={(e) => setRemaining(e.target.value)}
+              />
             </div>
             <div className="form-field">
               <label>

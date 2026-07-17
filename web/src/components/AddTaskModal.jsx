@@ -16,6 +16,8 @@ export default function AddTaskModal({ onClose, onRefresh }) {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [result, setResult] = React.useState("");
+  const [showScheduleAt, setShowScheduleAt] = React.useState(false);
+  const [scheduleAtTime, setScheduleAtTime] = React.useState("");
 
   async function handleParse() {
     if (!text.trim()) return;
@@ -44,7 +46,6 @@ export default function AddTaskModal({ onClose, onRefresh }) {
   async function handleAdd(scheduleMode) {
     setLoading(true);
 
-    // Create the task
     const addRes = await fetch(`${API}/add-task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -64,7 +65,8 @@ export default function AddTaskModal({ onClose, onRefresh }) {
       return;
     }
 
-    // Schedule if requested
+    const exactTitle = addData.title || parsed.title;
+
     if (scheduleMode === "find-slot") {
       const duration = parseDurationToMinutes(parsed.duration_estimated);
       const slotRes = await fetch(`${API}/find-slot`, {
@@ -75,34 +77,49 @@ export default function AddTaskModal({ onClose, onRefresh }) {
       const slotData = await slotRes.json();
 
       if (slotData.status === "found") {
+        const slotStart = new Date(slotData.start_iso);
+        const hours = String(slotStart.getHours()).padStart(2, "0");
+        const minutes = String(slotStart.getMinutes()).padStart(2, "0");
         const now = new Date();
         const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
         await fetch(`${API}/schedule-task`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            task_title: parsed.title,
+            task_title: exactTitle,
             duration_minutes: duration,
-            preferred_start: slotData.start,
+            preferred_start: `${hours}:${minutes}`,
             preferred_date: date,
           }),
         });
         setResult(`Scheduled for ${slotData.start} – ${slotData.end}`);
       } else {
-        setResult("Added to backlog — no free slot found today.");
+        setResult("Added to unscheduled — no free slot found today.");
       }
+    } else if (scheduleMode === "schedule-at") {
+      const duration = parseDurationToMinutes(parsed.duration_estimated);
+      await fetch(`${API}/schedule-task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_title: exactTitle,
+          duration_minutes: duration,
+          preferred_start: scheduleAtTime,
+          preferred_date: null,
+        }),
+      });
+      setResult(`Scheduled for ${scheduleAtTime}`);
     } else if (scheduleMode === "now") {
       const now = new Date();
       const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
       const hours = String(now.getHours()).padStart(2, "0");
       const minutes = String(now.getMinutes()).padStart(2, "0");
       const duration = parseDurationToMinutes(parsed.duration_estimated);
-
       await fetch(`${API}/schedule-task`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          task_title: parsed.title,
+          task_title: exactTitle,
           duration_minutes: duration,
           preferred_start: `${hours}:${minutes}`,
           preferred_date: date,
@@ -110,22 +127,9 @@ export default function AddTaskModal({ onClose, onRefresh }) {
       });
       setResult(`Scheduled now until ${getEndTime(now, duration)}`);
     } else {
-      setResult("Added to backlog.");
+      setResult("Added to unscheduled.");
     }
 
-    setStep(STEPS.DONE);
-    setLoading(false);
-    onRefresh();
-  }
-
-  async function handleForceAdd(scheduleMode) {
-    setLoading(true);
-    await fetch(`${API}/add-task`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, force: true }),
-    });
-    setResult("Created (duplicate overridden).");
     setStep(STEPS.DONE);
     setLoading(false);
     onRefresh();
@@ -193,6 +197,15 @@ export default function AddTaskModal({ onClose, onRefresh }) {
           {/* Step 2 — Preview */}
           {step === STEPS.PREVIEW && parsed && (
             <div className="checkin-form">
+              {/* Edit link */}
+              <button
+                className="edit-link"
+                onClick={() => setStep(STEPS.INPUT)}
+                disabled={loading}
+              >
+                ← edit input
+              </button>
+
               <div className="task-preview">
                 <div className="preview-row">
                   <span className="preview-label">Title</span>
@@ -238,36 +251,72 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                 <p style={{ color: "var(--red)", fontSize: "13px" }}>{error}</p>
               )}
 
-              <div className="add-task-buttons">
-                <button
-                  className="btn-ghost"
-                  onClick={() => setStep(STEPS.INPUT)}
-                  disabled={loading}
-                >
-                  ← Edit
-                </button>
-                <button
-                  className="btn-ghost"
-                  onClick={() => handleAdd("backlog")}
-                  disabled={loading}
-                >
-                  Add to Unscheduled
-                </button>
-                <button
-                  className="btn-ghost"
-                  onClick={() => handleAdd("find-slot")}
-                  disabled={loading}
-                >
-                  {loading ? "..." : "Add & Find Slot"}
-                </button>
-                <button
-                  className="btn-primary"
-                  onClick={() => handleAdd("now")}
-                  disabled={loading}
-                >
-                  {loading ? "..." : "Add & Start Now"}
-                </button>
-              </div>
+              {/* Schedule At inline form */}
+              {step === STEPS.PREVIEW && showScheduleAt && (
+                <div className="schedule-at-form">
+                  <div className="form-field">
+                    <label>When?</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 7:35 PM, 2pm friday, tomorrow 9am"
+                      value={scheduleAtTime}
+                      onChange={(e) => setScheduleAtTime(e.target.value)}
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleAdd("schedule-at");
+                      }}
+                    />
+                  </div>
+                  <div className="add-task-buttons">
+                    <button
+                      className="btn-ghost"
+                      onClick={() => setShowScheduleAt(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="btn-primary"
+                      onClick={() => handleAdd("schedule-at")}
+                      disabled={loading || !scheduleAtTime.trim()}
+                    >
+                      {loading ? "..." : "Schedule"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* Action buttons — hidden when schedule-at form is open */}
+              {!showScheduleAt && (
+                <div className="add-task-buttons-grid">
+                  <button
+                    className="btn-ghost"
+                    onClick={() => handleAdd("backlog")}
+                    disabled={loading}
+                  >
+                    Add to Unscheduled
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => handleAdd("find-slot")}
+                    disabled={loading}
+                  >
+                    {loading ? "..." : "Add & Find Slot"}
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => setShowScheduleAt(true)}
+                    disabled={loading}
+                  >
+                    Add & Schedule At
+                  </button>
+                  <button
+                    className="btn-primary"
+                    onClick={() => handleAdd("now")}
+                    disabled={loading}
+                  >
+                    {loading ? "..." : "Add & Start Now"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

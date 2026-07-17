@@ -72,8 +72,18 @@ function itemToFCEvent(item) {
       title: item.title,
       start: item.date + "T" + to24hr(item.start),
       end: endTime,
-      backgroundColor: item.overdue ? "#C4832A" : "#5A8FA6",
-      borderColor: item.overdue ? "#C4832A" : "#5A8FA6",
+      backgroundColor:
+        item.status === "in-progress"
+          ? "#7B5EA7"
+          : item.overdue
+            ? "#C4832A"
+            : "#5A8FA6",
+      borderColor:
+        item.status === "in-progress"
+          ? "#7B5EA7"
+          : item.overdue
+            ? "#C4832A"
+            : "#5A8FA6",
       textColor: "white",
       editable: true,
       extendedProps: {
@@ -81,6 +91,7 @@ function itemToFCEvent(item) {
         energy: item.energy,
         duration: item.duration,
         title: item.title,
+        status: item.status,
       },
     };
   }
@@ -101,9 +112,11 @@ const CalendarGrid = forwardRef(function CalendarGrid(
 ) {
   const calendarRef = useRef(null);
   const [currentDateLabel, setCurrentDateLabel] = useState("");
-
+  const [showColorKey, setShowColorKey] = useState(false);
   useImperativeHandle(ref, () => ({
     refresh() {
+      console.log("refresh called, clearing cache");
+      eventsCache = [];
       calendarRef.current?.getApi().refetchEvents();
     },
     gotoDate(date) {
@@ -142,9 +155,61 @@ const CalendarGrid = forwardRef(function CalendarGrid(
 
   return (
     <div className="calendar-grid">
-      {currentDateLabel && (
-        <div className="calendar-date-label">{currentDateLabel}</div>
-      )}
+      {/* ── Date label + color key ── */}
+      <div className="calendar-header-row">
+        {currentDateLabel && (
+          <div className="calendar-date-label">{currentDateLabel}</div>
+        )}
+        <div className="color-key-wrapper">
+          <button
+            className="color-key-btn"
+            onClick={() => setShowColorKey(!showColorKey)}
+          >
+            ?
+          </button>
+          {showColorKey && (
+            <>
+              <div
+                className="context-overlay"
+                onClick={() => setShowColorKey(false)}
+              />
+              <div className="color-key-popover">
+                <div className="color-key-title">Calendar Legend</div>
+                <div className="color-key-item">
+                  <div
+                    className="color-key-dot"
+                    style={{ background: "#3D6B4F" }}
+                  />
+                  <span>Google Calendar event</span>
+                </div>
+                <div className="color-key-item">
+                  <div
+                    className="color-key-dot"
+                    style={{ background: "#5A8FA6" }}
+                  />
+                  <span>Scheduled task</span>
+                </div>
+                <div className="color-key-item">
+                  <div
+                    className="color-key-dot"
+                    style={{ background: "#7B5EA7" }}
+                  />
+                  <span>In progress (paused)</span>
+                </div>
+                <div className="color-key-item">
+                  <div
+                    className="color-key-dot"
+                    style={{ background: "#C4832A" }}
+                  />
+                  <span>Overdue task</span>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── FullCalendar ── */}
       <FullCalendar
         ref={calendarRef}
         plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}

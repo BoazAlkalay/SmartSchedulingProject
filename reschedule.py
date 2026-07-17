@@ -103,25 +103,30 @@ def stopping_now(
     continuation_note: str = "",
     energy: str = "unknown",
 ) -> str:
-    """
-    Stopping now but need more time.
-    Saves progress state and logs a checkin.
-    """
     filepath = find_task_file(task_title)
 
     if filepath:
+        post = frontmatter.load(filepath)
+
+        # Truncate calendar event to current time
+        event_id = post.metadata.get("calendar_event_id")
+        if event_id:
+            from calendar_writer import truncate_calendar_event
+
+            truncate_calendar_event(event_id)
+
         updates = {
             "status": "in-progress",
             "progress": progress,
             "remaining": remaining,
             "continuation_note": continuation_note,
+            "calendar_event_id": None,  # clear since event is now historical
         }
         update_task_file(filepath, updates)
     else:
         print(f"Could not find task matching: {task_title}")
         print("Logging checkin anyway.")
 
-    # Log checkin regardless
     create_checkin(
         doing=f"stopping on: {task_title}",
         energy=energy,
@@ -407,12 +412,7 @@ def complete_task(
         post.metadata["completed"] = datetime.now().strftime("%Y-%m-%d")
         post.metadata["duration_actual"] = actual_duration
 
-        # Handle recurrence BEFORE moving file
-        recurrence = post.metadata.get("recurrence")
-        if recurrence:
-            _spawn_next_recurrence(post, filepath)
-
-        # Move file to done/ folder
+        # Move file to done/ folder FIRST so recurrence spawn has no collision
         from config import DONE
 
         DONE.mkdir(parents=True, exist_ok=True)
@@ -431,6 +431,11 @@ def complete_task(
         # Delete original file
         filepath.unlink()
         print(f"Moved to done/: {done_path.name}")
+
+        # THEN spawn recurrence — original file is gone, no collision
+        recurrence = post.metadata.get("recurrence")
+        if recurrence:
+            _spawn_next_recurrence(post, filepath)
 
         # LLM decides keep or delete
         _llm_keep_or_delete(post, done_path)
@@ -490,6 +495,9 @@ Reply with ONLY one word: keep or delete"""
 def _spawn_next_recurrence(post: object, original_filepath) -> None:
     """
     Create the next instance of a recurring task.
+    Handles: every X days, every X weeks, every X months,
+             twice a day, every X hours, biweekly, fortnight,
+             on mondays and wednesdays (specific day patterns)
     """
     from datetime import timedelta
     import re
@@ -498,11 +506,23 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
     if not recurrence:
         return
 
-    # Parse recurrence interval
-    days = None
     recurrence_lower = recurrence.lower()
+    days = None
+    hours = None
 
-    if "day" in recurrence_lower:
+    # Parse recurrence interval
+    if (
+        "twice a day" in recurrence_lower
+        or "2x daily" in recurrence_lower
+        or "2 times a day" in recurrence_lower
+    ):
+        hours = 12
+    elif "three times a day" in recurrence_lower or "3x daily" in recurrence_lower:
+        hours = 8
+    elif "hour" in recurrence_lower:
+        match = re.search(r"(\d+)", recurrence_lower)
+        hours = int(match.group(1)) if match else 24
+    elif "day" in recurrence_lower:
         match = re.search(r"(\d+)", recurrence_lower)
         days = int(match.group(1)) if match else 1
     elif "week" in recurrence_lower:
@@ -517,13 +537,54 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
         days = 14
     elif "fortnight" in recurrence_lower:
         days = 14
+    elif any(
+        day in recurrence_lower
+        for day in [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ]
+    ):
+        # Handle specific day patterns e.g. "on mondays and wednesdays"
+        day_names = [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ]
+        target_days = [i for i, day in enumerate(day_names) if day in recurrence_lower]
 
-    if not days:
+        if target_days:
+            today_weekday = datetime.now().weekday()
+            days_ahead = None
+
+            # Find the nearest upcoming target day
+            for offset in range(1, 8):
+                next_weekday = (today_weekday + offset) % 7
+                if next_weekday in target_days:
+                    days_ahead = offset
+                    break
+
+            if days_ahead:
+                days = days_ahead
+
+    if not days and not hours:
         print(f"Could not parse recurrence: {recurrence}")
         return
 
     # Calculate next due date
-    next_due = datetime.now() + timedelta(days=days)
+    if hours:
+        next_due = datetime.now() + timedelta(hours=hours)
+    else:
+        next_due = datetime.now() + timedelta(days=days)
+
     next_due_str = next_due.strftime("%Y-%m-%d")
 
     # Does this task have a hard deadline or is it flexible?
@@ -548,31 +609,39 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
     new_metadata["created"] = datetime.now().strftime("%Y-%m-%d")
 
     if has_hard_deadline:
-        # Deadline-driven recurring task — set deadline and planned_date to next due
+        # Deadline-driven recurring task
         new_metadata["deadline"] = next_due_str
         new_metadata["planned_date"] = next_due_str
-        # Keep original priority
     else:
         # Flexible recurring task — snooze until interval passes, mark low priority
         new_metadata["deadline"] = None
-        new_metadata["planned_date"] = next_due_str  # snooze until due
+        new_metadata["planned_date"] = next_due_str
         new_metadata["priority"] = "low"
 
-    # Write new task file in same folder as original
-    destination = original_filepath.parent
-    new_filepath = destination / original_filepath.name
+    # Generate clean filename from title
+    clean_title = new_metadata.get("title", "untitled").lower()
+    clean_title = clean_title.replace(" ", "_")
+    clean_title = re.sub(r"[^\w]", "", clean_title)
+    clean_title = re.sub(r"_+", "_", clean_title)
+    new_filename = f"{clean_title}.md"
 
+    # Write in same folder as original
+    destination = original_filepath.parent
+    new_filepath = destination / new_filename
+
+    # Handle collision
     counter = 2
     while new_filepath.exists():
-        new_filepath = destination / f"{original_filepath.stem}_{counter}.md"
+        new_filepath = destination / f"{clean_title}_{counter}.md"
         counter += 1
 
     new_post = frontmatter.Post(post.content, **new_metadata)
     with open(new_filepath, "w", encoding="utf-8") as f:
         f.write(frontmatter.dumps(new_post))
 
+    interval_str = f"{hours}hr" if hours else f"{days}d"
     print(
-        f"Spawned next recurrence: {new_filepath.name} (due {next_due_str}, {'deadline-driven' if has_hard_deadline else 'flexible/low priority'})"
+        f"Spawned next recurrence: {new_filepath.name} (due {next_due_str}, interval: {interval_str}, {'deadline-driven' if has_hard_deadline else 'flexible/low priority'})"
     )
 
 
