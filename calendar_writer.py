@@ -6,6 +6,8 @@ import math
 from pathlib import Path
 from config import TASKS, INBOX
 
+BUFFER_MINUTES = 5
+
 
 def round_to_5_minutes(dt):
     minutes = dt.minute
@@ -115,7 +117,7 @@ def find_best_slot(duration_minutes: int) -> dict:
                     "start_iso": rounded_start.isoformat(),
                     "end_iso": end.isoformat(),
                 }
-        current = max(current, block_end)
+        current = max(current, block_end + timedelta(minutes=BUFFER_MINUTES))
 
     # Check remaining time after all blocks
     remaining = (day_end - current).total_seconds() / 60

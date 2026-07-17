@@ -44,6 +44,12 @@ Today is {today} ({day_of_week}) and the current time is {current_time}.
 When the user says "today" the deadline is exactly {today}.
 When the user says "tomorrow" the deadline is exactly {(now + __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")}.
 When the user says "this week" the deadline is the coming Sunday.
+If the user mentions a specific time (e.g. "at 3pm", "tonight at 8", "tomorrow morning at 9"), extract it as parsed_datetime in ISO format combining the resolved date and time.
+If the user says a time like "at 6" or "at 9" with no AM/PM specified:
+- If that time is more than 1 hour in the future today, assume today
+- If that time has already passed today, assume tomorrow
+- Default to PM for times 1-11 if context suggests daytime activity
+- Default to AM for times 1-11 if context suggests morning activity (breakfast, wake up etc.)
 
 Parse the following into a task. Return ONLY a JSON object with these exact fields:
 {{
@@ -57,6 +63,7 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "slot_level": 0-9,
     "preferred_days": ["monday", "wednesday"] or [],
     "preferred_time": "e.g. morning or null",
+    "parsed_datetime": "e.g. 2026-07-17T15:00:00 if a specific time was mentioned, or null",
     "blocked_by": [],
     "tags": ["tag1", "tag2"],
     "folder": "which folder this belongs in e.g. tasks/work/deep-work",

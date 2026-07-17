@@ -28,14 +28,17 @@ function deadlineUrgency(deadline) {
   if (!deadline || deadline === "None") return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const due = new Date(deadline);
-  due.setHours(0, 0, 0, 0);
+
+  // Parse as local date to avoid UTC offset issue
+  const [year, month, day] = deadline.split("-").map(Number);
+  const due = new Date(year, month - 1, day);
+
   const days = Math.round((due - today) / 86400000);
   if (days < 0) return { label: "Overdue", color: "#8B2E2E", days };
-  if (days === 0) return { label: "Due today", color: "#8B2E2E", days };
-  if (days === 1) return { label: "Due tomorrow", color: "#C4832A", days };
-  if (days <= 3) return { label: `Due in ${days}d`, color: "#C4832A", days };
-  if (days <= 7) return { label: `Due in ${days}d`, color: "#D4A843", days };
+  if (days === 0) return { label: "Due today", color: "#C4832A", days };
+  if (days === 1) return { label: "Due tomorrow", color: "#D4A843", days };
+  if (days <= 3) return { label: `Due in ${days}d`, color: "#D4A843", days };
+  if (days <= 7) return { label: `Due in ${days}d`, color: "#6B6560", days };
   return { label: `Due in ${days}d`, color: "#6B6560", days };
 }
 
@@ -424,7 +427,16 @@ export default function TaskPool({ onRefresh }) {
         return taskList.filter((t) => {
           const u = deadlineUrgency(t.deadline);
           if (!u || u.days > 7) return false;
-          if (t.created === todayStr) return false;
+
+          // Hide recently spawned tasks unless they're genuinely urgent
+          if (t.created) {
+            const created = new Date(t.created);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const daysSinceCreated = Math.floor((today - created) / 86400000);
+            if (daysSinceCreated <= 2 && u.days > 3) return false;
+          }
+
           return true;
         });
       case "focused":

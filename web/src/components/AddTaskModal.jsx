@@ -245,6 +245,32 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                     </span>
                   </div>
                 )}
+                {parsed.recurrence && (
+                  <div className="preview-row">
+                    <span className="preview-label">Recurrence</span>
+                    <span className="preview-value">{parsed.recurrence}</span>
+                  </div>
+                )}
+                {parsed.parsed_datetime && (
+                  <div className="preview-row">
+                    <span className="preview-label">Suggested time</span>
+                    <span
+                      className="preview-value"
+                      style={{ color: "var(--green)" }}
+                    >
+                      {new Date(parsed.parsed_datetime).toLocaleString(
+                        "default",
+                        {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        },
+                      )}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {error && (
@@ -252,7 +278,7 @@ export default function AddTaskModal({ onClose, onRefresh }) {
               )}
 
               {/* Schedule At inline form */}
-              {step === STEPS.PREVIEW && showScheduleAt && (
+              {showScheduleAt && (
                 <div className="schedule-at-form">
                   <div className="form-field">
                     <label>When?</label>
@@ -284,7 +310,7 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                   </div>
                 </div>
               )}
-              {/* Action buttons — hidden when schedule-at form is open */}
+
               {!showScheduleAt && (
                 <div className="add-task-buttons-grid">
                   <button
@@ -303,10 +329,23 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                   </button>
                   <button
                     className="btn-ghost"
-                    onClick={() => setShowScheduleAt(true)}
+                    onClick={() => {
+                      if (parsed.parsed_datetime) {
+                        const dt = new Date(parsed.parsed_datetime);
+                        const hours = String(dt.getHours()).padStart(2, "0");
+                        const minutes = String(dt.getMinutes()).padStart(
+                          2,
+                          "0",
+                        );
+                        setScheduleAtTime(`${hours}:${minutes}`);
+                      }
+                      setShowScheduleAt(true);
+                    }}
                     disabled={loading}
                   >
-                    Add & Schedule At
+                    {parsed.parsed_datetime
+                      ? "⚡ Schedule at Parsed Time"
+                      : "Add & Schedule At"}
                   </button>
                   <button
                     className="btn-primary"
