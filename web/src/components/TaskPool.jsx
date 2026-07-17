@@ -291,41 +291,46 @@ export default function TaskPool({ onRefresh }) {
 
   async function handleResumeTime(task) {
     const input = prompt(
-      'Resume at what time and date?\n(e.g. "9:00 AM", "tomorrow 2pm", "2026-07-18 10:00")',
+      'Resume at what time and date?\n(e.g. "9:00 AM", "tomorrow 2pm", "wednesday" to plan for that day)',
     );
     if (!input) return;
     setTaskMenu(null);
+
     const duration = await getResumeDuration(task);
+    const inputLower = input.trim().toLowerCase();
 
-    // Parse date and time from input
-    const now = new Date();
-    let date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    let time = input;
+    // Check if input is date-only (no time component)
+    const hasTime =
+      /\d{1,2}(:\d{2})?\s*(am|pm)/i.test(input) ||
+      /\b\d{2}:\d{2}\b/.test(input);
+    const isDateOnly = !hasTime;
 
-    // Check if input contains a date
-    if (input.toLowerCase().includes("tomorrow")) {
-      const tomorrow = new Date(now);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      date = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
-      time = input.replace(/tomorrow/i, "").trim();
-    } else if (input.match(/\d{4}-\d{2}-\d{2}/)) {
-      const match = input.match(/(\d{4}-\d{2}-\d{2})\s*(.*)/);
-      if (match) {
-        date = match[1];
-        time = match[2].trim();
-      }
+    if (isDateOnly) {
+      // Plan for that date without scheduling a specific time
+      await fetch(`${API}/plan-task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_title: task.title,
+          planned_date: input, // backend NLP handles "wednesday", "july 18" etc
+        }),
+      });
+    } else {
+      // Has a time — schedule it
+      const now = new Date();
+      const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+      await fetch(`${API}/schedule-task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_title: task.title,
+          duration_minutes: duration,
+          preferred_start: input,
+          preferred_date: null,
+        }),
+      });
     }
-
-    await fetch(`${API}/schedule-task`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        task_title: task.title,
-        duration_minutes: duration,
-        preferred_start: time,
-        preferred_date: date,
-      }),
-    });
     refreshAll();
   }
 

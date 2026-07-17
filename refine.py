@@ -228,12 +228,15 @@ Return ONLY the new markdown document, no preamble."""
 
 def consolidate_ideas() -> str:
     """
-    Read ideas.md, consolidate and prioritize into a structured roadmap.md.
+    Read ideas.md and existing roadmap, consolidate into a fresh roadmap.md.
+    Archives the previous roadmap to system/roadmap_history/.
     """
     from config import VAULT_PATH
 
     ideas_path = VAULT_PATH / "system/ideas.md"
     roadmap_path = VAULT_PATH / "system/roadmap.md"
+    history_dir = VAULT_PATH / "system/roadmap_history"
+    history_dir.mkdir(exist_ok=True)
 
     if not ideas_path.exists():
         return "No ideas.md found."
@@ -241,27 +244,37 @@ def consolidate_ideas() -> str:
     with open(ideas_path, "r", encoding="utf-8") as f:
         ideas = f.read()
 
-    if not ideas.strip():
-        return "ideas.md is empty."
+    # Read and archive existing roadmap if it exists
+    existing_roadmap = ""
+    if roadmap_path.exists():
+        with open(roadmap_path, "r", encoding="utf-8") as f:
+            existing_roadmap = f.read()
 
-    prompt = f"""You are reviewing a list of ideas, feature requests, and improvements for a personal scheduling assistant called SmartScheduler.
+        archive_path = history_dir / f"roadmap_{datetime.now().strftime('%Y-%m-%d')}.md"
+        with open(archive_path, "w", encoding="utf-8") as f:
+            f.write(existing_roadmap)
+        print(f"Archived existing roadmap to {archive_path.name}")
 
-Your job is to consolidate these ideas into a structured, prioritized roadmap.
+    prompt = f"""You are updating a SmartScheduler development roadmap.
 
-Raw ideas:
+Current roadmap (preserve completed items marked with [x], update priorities based on new ideas):
+{existing_roadmap if existing_roadmap else "No existing roadmap."}
+
+New ideas to incorporate:
 {ideas}
 
 Instructions:
-- Group related ideas together under themes
-- Remove exact duplicates, merge near-duplicates
-- Estimate complexity for each: Quick (< 1hr), Medium (1-3hrs), Large (3hrs+)
-- Prioritize within each group: High / Medium / Low
-- Note any dependencies between features
-
-Return ONLY a markdown document in exactly this structure:
+- Preserve all [x] completed items exactly as they are — they represent what has already been built
+- Merge new ideas into appropriate sections, removing duplicates
+- Re-estimate complexity and priority based on what has been built
+- Note dependencies between new and existing features
+- Keep the same markdown structure:
 
 # SmartScheduler Roadmap
 Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+## Newly Added This Run
+<!-- Brief list of what was added or changed -->
 
 ## Quick Wins
 <!-- High value, low effort -->
@@ -279,7 +292,7 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}
 <!-- Any important relationships between features -->
 - Note about dependencies
 
-No preamble, no explanation, just the markdown document."""
+Return ONLY the markdown document, no preamble."""
 
     message = client.messages.create(
         model=REFINEMENT_MODEL,
@@ -292,7 +305,7 @@ No preamble, no explanation, just the markdown document."""
     with open(roadmap_path, "w", encoding="utf-8") as f:
         f.write(roadmap)
 
-    return f"Roadmap generated and saved to system/roadmap.md. Open it in Obsidian to review."
+    return f"Roadmap updated. Previous version archived to roadmap_history/. Open system/roadmap.md in Obsidian to review."
 
 
 if __name__ == "__main__":

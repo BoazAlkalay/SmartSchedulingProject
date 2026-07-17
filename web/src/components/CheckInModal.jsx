@@ -3,6 +3,7 @@ import React from "react";
 const API = `http://${window.location.hostname}:8000`;
 
 export default function CheckInModal({ onClose }) {
+  const [mode, setMode] = React.useState("active");
   const [doing, setDoing] = React.useState("");
   const [energy, setEnergy] = React.useState("medium");
   const [mood, setMood] = React.useState("");
@@ -11,14 +12,14 @@ export default function CheckInModal({ onClose }) {
   const [done, setDone] = React.useState(false);
 
   async function handleSubmit() {
-    if (!doing.trim()) return;
+    if (mode === "active" && !doing.trim()) return;
     setSubmitting(true);
 
     await fetch(`${API}/checkin`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        doing,
+        doing: mode === "active" ? doing : "passive check-in",
         energy,
         mood,
         notes,
@@ -53,16 +54,42 @@ export default function CheckInModal({ onClose }) {
             </p>
           ) : (
             <div className="checkin-form">
-              <div className="form-field">
-                <label>What are you doing?</label>
-                <input
-                  type="text"
-                  placeholder="e.g. working on the system"
-                  value={doing}
-                  onChange={(e) => setDoing(e.target.value)}
-                  autoFocus
-                />
+              {/* Mode toggle */}
+              <div className="checkin-mode-toggle">
+                <button
+                  className={mode === "active" ? "active" : ""}
+                  onClick={() => setMode("active")}
+                >
+                  Active
+                </button>
+                <button
+                  className={mode === "passive" ? "active" : ""}
+                  onClick={() => setMode("passive")}
+                >
+                  Just Logging
+                </button>
               </div>
+
+              {/* Active only — what are you doing */}
+              {mode === "active" && (
+                <div className="form-field">
+                  <label>What are you doing?</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. working on the system"
+                    value={doing}
+                    onChange={(e) => setDoing(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+              )}
+
+              {/* Passive mode note */}
+              {mode === "passive" && (
+                <p className="muted" style={{ fontSize: "12px" }}>
+                  Just capturing your current state — no task needed.
+                </p>
+              )}
 
               <div className="form-field">
                 <label>Energy</label>
@@ -105,7 +132,7 @@ export default function CheckInModal({ onClose }) {
               <button
                 className="btn-primary"
                 onClick={handleSubmit}
-                disabled={submitting || !doing.trim()}
+                disabled={submitting || (mode === "active" && !doing.trim())}
                 style={{ width: "100%", marginTop: "8px" }}
               >
                 {submitting ? "Logging..." : "Log Check In"}
