@@ -957,3 +957,132 @@
   color: var(--ink-muted);
   padding: 6px 0 3px;
 }
+
+/* ── Bracket Background Events ── */
+.fc-bg-event {
+  opacity: 1 !important;
+}
+
+/* ── Bracket Type Toggle ── */
+.bracket-type-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.bracket-type-toggle button {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--ink-muted);
+}
+
+.bracket-type-toggle button.active.green {
+  background: rgba(61, 107, 79, 0.15);
+  border-color: #3D6B4F;
+  color: #3D6B4F;
+}
+
+.bracket-type-toggle button.active.red {
+  background: rgba(139, 46, 46, 0.15);
+  border-color: #8B2E2E;
+  color: #8B2E2E;
+}
+
+/* ── Day Selector ── */
+.day-selector {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.day-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  padding: 0;
+}
+
+.day-btn.active {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+
+/* ── Bracket Manager ── */
+.bracket-section {
+  margin-bottom: 16px;
+}
+
+.bracket-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+  padding: 4px 0 8px;
+}
+
+.bracket-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.bracket-row-color {
+  width: 4px;
+  border-radius: 2px;
+  align-self: stretch;
+  flex-shrink: 0;
+  min-height: 20px;
+}
+
+.bracket-row-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bracket-row-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.bracket-row-meta {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.bracket-row-desc {
+  font-size: 11px;
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+.bracket-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.bracket-row-actions button {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.bracket-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}

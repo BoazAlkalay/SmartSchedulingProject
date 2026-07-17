@@ -104,6 +104,31 @@ class UnscheduleTaskRequest(BaseModel):
     task_title: str
 
 
+class CreateBracketRequest(BaseModel):
+    name: str
+    type: str  # "schedule" or "block"
+    color: str  # "green" or "red"
+    start_time: str
+    end_time: str
+    days: list = []
+    description: Optional[str] = ""
+    reflections: Optional[str] = ""
+    specific_date: Optional[str] = None
+
+
+class UpdateBracketRequest(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    color: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    days: Optional[list] = None
+    description: Optional[str] = None
+    reflections: Optional[str] = None
+    specific_date: Optional[str] = None
+    active: Optional[bool] = None
+
+
 # --- Endpoints ---
 
 
@@ -918,6 +943,79 @@ def consolidate_ideas_endpoint():
 
         message = consolidate_ideas()
         return {"status": "consolidated", "message": message}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/brackets")
+def get_brackets_endpoint():
+    """Return all active brackets."""
+    try:
+        from bracket_manager import get_brackets
+
+        return {"brackets": get_brackets()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/brackets")
+def create_bracket_endpoint(request: CreateBracketRequest):
+    """Create a new bracket."""
+    try:
+        from bracket_manager import create_bracket
+
+        bracket = create_bracket(
+            name=request.name,
+            bracket_type=request.type,
+            color=request.color,
+            start_time=request.start_time,
+            end_time=request.end_time,
+            days=request.days,
+            description=request.description,
+            reflections=request.reflections,
+            specific_date=request.specific_date,
+        )
+        return {"status": "created", "bracket": bracket}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/brackets/{bracket_id}")
+def update_bracket_endpoint(bracket_id: str, request: UpdateBracketRequest):
+    """Update an existing bracket."""
+    try:
+        from bracket_manager import update_bracket
+
+        updates = {k: v for k, v in request.dict().items() if v is not None}
+        bracket = update_bracket(bracket_id, updates)
+        if not bracket:
+            raise HTTPException(status_code=404, detail="Bracket not found")
+        return {"status": "updated", "bracket": bracket}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/brackets/{bracket_id}")
+def delete_bracket_endpoint(bracket_id: str):
+    """Delete a bracket."""
+    try:
+        from bracket_manager import delete_bracket
+
+        success = delete_bracket(bracket_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Bracket not found")
+        return {"status": "deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/brackets/date/{date_str}")
+def get_brackets_for_date_endpoint(date_str: str):
+    """Return brackets that apply to a specific date."""
+    try:
+        from bracket_manager import get_brackets_for_date
+
+        return {"brackets": get_brackets_for_date(date_str)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

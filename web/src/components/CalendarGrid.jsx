@@ -13,6 +13,62 @@ import interactionPlugin from "@fullcalendar/interaction";
 const API = `http://${window.location.hostname}:8000`;
 
 let eventsCache = [];
+let bracketsCache = [];
+
+async function fetchBrackets(dateRange) {
+  const res = await fetch(`${API}/brackets`);
+  const data = await res.json();
+  const brackets = data.brackets || [];
+
+  const dayNames = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ];
+  const events = [];
+
+  // Generate dates in the current view range
+  const start = new Date(dateRange.start);
+  const end = new Date(dateRange.end);
+
+  for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const dayName = dayNames[d.getDay()];
+
+    for (const bracket of brackets) {
+      const matchesDay = bracket.days?.includes(dayName);
+      const matchesDate = bracket.specific_date === dateStr;
+
+      if (matchesDay || matchesDate) {
+        events.push({
+          id: `bracket_${bracket.id}_${dateStr}`,
+          title: bracket.name,
+          start: `${dateStr}T${bracket.start_time}:00`,
+          end: `${dateStr}T${bracket.end_time}:00`,
+          display: "background",
+          backgroundColor:
+            bracket.color === "green"
+              ? "rgba(61, 151, 95, 0.25)"
+              : "rgba(139, 46, 46, 0.25)",
+          borderColor:
+            bracket.color === "green"
+              ? "rgba(61, 107, 79, 0.6)"
+              : "rgba(139, 46, 46, 0.6)",
+          extendedProps: {
+            type: "bracket",
+            bracket: bracket,
+          },
+        });
+      }
+    }
+  }
+
+  return events;
+}
 
 async function fetchEvents() {
   const res = await fetch(`${API}/whats-coming?scope=full_two_days`);
@@ -107,7 +163,7 @@ function to24hr(timeStr) {
 }
 
 const CalendarGrid = forwardRef(function CalendarGrid(
-  { view, onContextMenu, onDateClick, onDateChange },
+  { view, onContextMenu, onDateClick, onDateChange, onBracketCreate },
   ref,
 ) {
   const calendarRef = useRef(null);
@@ -117,6 +173,7 @@ const CalendarGrid = forwardRef(function CalendarGrid(
     refresh() {
       console.log("refresh called, clearing cache");
       eventsCache = [];
+      bracketsCache = [];
       calendarRef.current?.getApi().refetchEvents();
     },
     gotoDate(date) {
@@ -136,6 +193,9 @@ const CalendarGrid = forwardRef(function CalendarGrid(
     },
     today() {
       calendarRef.current?.getApi().today();
+    },
+    unselect() {
+      calendarRef.current?.getApi().unselect();
     },
   }));
 
@@ -230,7 +290,9 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         nowIndicator={true}
         editable={true}
         selectable={true}
+        unselectAuto={false}
         droppable={true}
+        eventInteractive={true}
         datesSet={(info) => {
           const start = info.start;
           const viewType = info.view.type;
@@ -275,11 +337,16 @@ const CalendarGrid = forwardRef(function CalendarGrid(
           return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:00`;
         })()}
         events={async (fetchInfo, successCallback) => {
-          if (eventsCache.length > 0) {
-            successCallback(eventsCache);
+          // Return cache immediately to prevent flicker
+          if (eventsCache.length > 0 || bracketsCache.length > 0) {
+            successCallback([...eventsCache, ...bracketsCache]);
           }
-          const fresh = await fetchEvents();
-          successCallback(fresh);
+          const [fresh, brackets] = await Promise.all([
+            fetchEvents(),
+            fetchBrackets(fetchInfo),
+          ]);
+          bracketsCache = brackets;
+          successCallback([...fresh, ...brackets]);
         }}
         eventClick={(info) => {
           info.jsEvent.preventDefault();
@@ -287,11 +354,18 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         eventDidMount={(info) => {
           const el = info.el;
 
+          // Skip context menu for brackets
+          if (info.event.extendedProps.type === "bracket") {
+            return;
+          }
+
+          // Desktop: right-click for regular events
           el.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             onContextMenu(e.clientX, e.clientY, info.event);
           });
 
+          // Mobile: long press
           let longPressTimer = null;
 
           el.addEventListener("touchstart", (e) => {
@@ -316,7 +390,13 @@ const CalendarGrid = forwardRef(function CalendarGrid(
           });
         }}
         select={(info) => {
-          console.log("selected:", info.startStr, "→", info.endStr);
+          if (onBracketCreate) {
+            onBracketCreate({
+              start: info.startStr,
+              end: info.endStr,
+              date: info.startStr.split("T")[0],
+            });
+          }
         }}
         dateClick={(info) => {
           if (info.view.type === "dayGridMonth") {

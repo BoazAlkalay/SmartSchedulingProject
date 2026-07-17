@@ -6,6 +6,8 @@ import ContextMenu from "./components/ContextMenu";
 import WhatNowModal, { WhatNowInline } from "./components/WhatNowModal";
 import CheckInModal from "./components/CheckInModal";
 import AddTaskModal from "./components/AddTaskModal";
+import BracketModal from "./components/BracketModal";
+import BracketManager from "./components/BracketManager";
 
 const API = `http://${window.location.hostname}:8000`;
 
@@ -21,6 +23,8 @@ function App() {
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [viewedDate, setViewedDate] = useState(null);
+  const [newBracket, setNewBracket] = useState(null);
+  const [showBrackets, setShowBrackets] = useState(false);
 
   const handleRefresh = useCallback(() => {
     calendarGridRef.current?.refresh();
@@ -40,6 +44,10 @@ function App() {
 
   const handleDateChange = useCallback((date) => {
     setViewedDate(date);
+  }, []);
+
+  const handleBracketCreate = useCallback((info) => {
+    setNewBracket(info);
   }, []);
 
   return (
@@ -222,6 +230,7 @@ function App() {
             onContextMenu={handleContextMenu}
             onDateClick={handleDateClick}
             onDateChange={handleDateChange}
+            onBracketCreate={handleBracketCreate}
           />
         </section>
 
@@ -258,6 +267,10 @@ function App() {
             }}
           >
             Panic
+          </button>
+
+          <button className="btn-ghost" onClick={() => setShowBrackets(true)}>
+            ⬡ Brackets
           </button>
 
           {showWhatNow && window.innerWidth <= 1024 && (
@@ -310,6 +323,27 @@ function App() {
         <AddTaskModal
           onClose={() => setShowAddTask(false)}
           onRefresh={handleRefresh}
+        />
+      )}
+
+      {newBracket && (
+        <BracketModal
+          info={newBracket}
+          onClose={() => {
+            setNewBracket(null);
+            calendarGridRef.current?.unselect();
+          }}
+          onSaved={() => {
+            setNewBracket(null);
+            calendarGridRef.current?.refresh();
+          }}
+        />
+      )}
+
+      {showBrackets && (
+        <BracketManager
+          onClose={() => setShowBrackets(false)}
+          onSaved={() => calendarGridRef.current?.refresh()}
         />
       )}
     </div>
