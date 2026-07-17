@@ -20,6 +20,7 @@ function App() {
   const [showCheckIn, setShowCheckIn] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [viewedDate, setViewedDate] = useState(null);
 
   const handleRefresh = useCallback(() => {
     calendarGridRef.current?.refresh();
@@ -35,6 +36,10 @@ function App() {
     setTimeout(() => {
       calendarGridRef.current?.gotoDate(dateStr);
     }, 50);
+  }, []);
+
+  const handleDateChange = useCallback((date) => {
+    setViewedDate(date);
   }, []);
 
   return (
@@ -180,7 +185,11 @@ function App() {
           className={`task-pool ${mobileTab === "tasks" ? "mobile-active" : ""}`}
         >
           <h2>Tasks</h2>
-          <TaskPool key={taskPoolKey} onRefresh={handleRefresh} />
+          <TaskPool
+            key={taskPoolKey}
+            onRefresh={handleRefresh}
+            viewedDate={viewedDate}
+          />
         </aside>
 
         <section className="calendar-pane">
@@ -212,6 +221,7 @@ function App() {
             onRefresh={handleRefresh}
             onContextMenu={handleContextMenu}
             onDateClick={handleDateClick}
+            onDateChange={handleDateChange}
           />
         </section>
 

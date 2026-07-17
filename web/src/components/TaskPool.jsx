@@ -118,23 +118,41 @@ function parseDurationToMinutes(duration) {
   return minutes || 60;
 }
 
-export default function TaskPool({ onRefresh }) {
+export default function TaskPool({ onRefresh, viewedDate }) {
   const [tasks, setTasks] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [taskMenu, setTaskMenu] = React.useState(null);
   const [filter, setFilter] = React.useState("all");
+  const [plannedLater, setPlannedLater] = React.useState([]);
+  const [showPlannedLater, setShowPlannedLater] = React.useState(false);
+
   const containerRef = useRef(null);
   const longPressTimer = useRef(null);
 
   const today = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
+  const viewedDateStr = viewedDate || todayStr;
+
+  const isViewingFuture = viewedDateStr > todayStr;
+  const viewedDateLabel = isViewingFuture
+    ? new Date(viewedDateStr + "T12:00:00").toLocaleDateString("default", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      })
+    : null;
+
+  const plannedForViewedDate = isViewingFuture
+    ? plannedLater.filter((t) => t.planned_date === viewedDateStr)
+    : [];
+
   function loadTasks() {
     setLoading(true);
     fetch(`${API}/tasks/current`)
       .then((r) => r.json())
       .then((data) => {
-        const filtered = data.tasks
+        const allTasks = data.tasks
           .filter((t) => t.status !== "done")
           .map((t) => ({
             ...t,
@@ -142,13 +160,25 @@ export default function TaskPool({ onRefresh }) {
             deadline: t.deadline === "None" ? null : t.deadline,
             created: t.created === "None" ? null : t.created,
             durationMinutes: parseDurationToMinutes(t.duration),
-          }))
-          .filter((t) => {
-            if (!t.planned_date) return true;
-            if (t.status === "in-progress") return true;
-            return t.planned_date <= todayStr;
-          });
-        setTasks(filtered);
+          }));
+        // Split into current and planned later
+        const current = allTasks.filter((t) => {
+          if (!t.planned_date) return true;
+          if (t.status === "in-progress") return true;
+          return t.planned_date <= todayStr;
+        });
+
+        const future = allTasks
+          .filter(
+            (t) =>
+              t.planned_date &&
+              t.planned_date > todayStr &&
+              t.status !== "in-progress",
+          )
+          .sort((a, b) => a.planned_date.localeCompare(b.planned_date));
+
+        setTasks(current);
+        setPlannedLater(future);
         setLoading(false);
       })
       .catch((err) => {
@@ -573,6 +603,91 @@ export default function TaskPool({ onRefresh }) {
             ))}
           </>
         )}
+        {/* Planned for viewed date — only shows when viewing a future date */}
+        {!loading && plannedForViewedDate.length > 0 && (
+          <>
+            <div
+              className="task-section-header"
+              style={{ color: "var(--green)" }}
+            >
+              📌 Planned for {viewedDateLabel}
+            </div>
+            {plannedForViewedDate.map((task) => (
+              <TaskCard
+                key={task.file}
+                task={task}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+                onRightClick={handleRightClick}
+              />
+            ))}
+          </>
+        )}
+
+        {/* Planned for Later — collapsible, excludes viewed date */}
+        {!loading &&
+          plannedLater.filter(
+            (t) => !isViewingFuture || t.planned_date !== viewedDateStr,
+          ).length > 0 && (
+            <div className="planned-later-section">
+              <button
+                className="planned-later-header"
+                onClick={() => setShowPlannedLater(!showPlannedLater)}
+              >
+                <span>
+                  {showPlannedLater ? "▾" : "▸"} Planned for Later (
+                  {
+                    plannedLater.filter(
+                      (t) =>
+                        !isViewingFuture || t.planned_date !== viewedDateStr,
+                    ).length
+                  }
+                  )
+                </span>
+              </button>
+
+              {showPlannedLater && (
+                <div className="planned-later-list">
+                  {Object.entries(
+                    plannedLater
+                      .filter(
+                        (t) =>
+                          !isViewingFuture || t.planned_date !== viewedDateStr,
+                      )
+                      .reduce((groups, task) => {
+                        const date = task.planned_date;
+                        if (!groups[date]) groups[date] = [];
+                        groups[date].push(task);
+                        return groups;
+                      }, {}),
+                  ).map(([date, dateTasks]) => (
+                    <div key={date}>
+                      <div className="planned-later-date">
+                        📅{" "}
+                        {new Date(date + "T12:00:00").toLocaleDateString(
+                          "default",
+                          {
+                            weekday: "short",
+                            month: "short",
+                            day: "numeric",
+                          },
+                        )}
+                      </div>
+                      {dateTasks.map((task) => (
+                        <TaskCard
+                          key={task.file}
+                          task={task}
+                          onTouchStart={handleTouchStart}
+                          onTouchEnd={handleTouchEnd}
+                          onRightClick={handleRightClick}
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
         {/* Empty state */}
         {!loading &&

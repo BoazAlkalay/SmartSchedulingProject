@@ -107,7 +107,7 @@ function to24hr(timeStr) {
 }
 
 const CalendarGrid = forwardRef(function CalendarGrid(
-  { view, onContextMenu, onDateClick },
+  { view, onContextMenu, onDateClick, onDateChange },
   ref,
 ) {
   const calendarRef = useRef(null);
@@ -234,6 +234,12 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         datesSet={(info) => {
           const start = info.start;
           const viewType = info.view.type;
+          // Notify parent of current viewed date
+          if (onDateChange) {
+            const viewedDate = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+            onDateChange(viewedDate);
+          }
+
           if (viewType === "dayGridMonth") {
             setCurrentDateLabel(
               start.toLocaleString("default", {
