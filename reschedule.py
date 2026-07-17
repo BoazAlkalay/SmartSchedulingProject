@@ -178,10 +178,25 @@ def parse_retry_time(text: str) -> str:
     minute = int(time_match.group(2)) if time_match.group(2) else 0
     meridiem = time_match.group(3)
 
+    # default to today, override if date keyword found
+    target_date = now
+
     if meridiem == "pm" and hour != 12:
         hour += 12
     elif meridiem == "am" and hour == 12:
         hour = 0
+
+    # Smart AM/PM inference when no meridiem specified
+    if not meridiem:
+        if 1 <= hour <= 11:
+            # If the hour has passed today as AM, try PM
+            test_am = target_date.replace(
+                hour=hour, minute=minute, second=0, microsecond=0
+            )
+            if test_am < now:
+                # AM has passed — try PM
+                hour += 12
+        # 12 stays as 12pm (noon), 0 stays as midnight
 
     # --- Extract date component ---
     day_names = [
@@ -193,9 +208,6 @@ def parse_retry_time(text: str) -> str:
         "saturday",
         "sunday",
     ]
-
-    # default to today, override if date keyword found
-    target_date = now
 
     if "tomorrow" in text:
         target_date = now + timedelta(days=1)
@@ -216,29 +228,40 @@ def parse_retry_time(text: str) -> str:
 
     # Combine date + time
     result = target_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    # If the result is in the past, push to tomorrow
+    if (
+        result < now
+        and "tomorrow" not in text
+        and not any(day in text for day in day_names)
+    ):
+        result = result + timedelta(days=1)
+
     return result.strftime("%Y-%m-%d %H:%M")
 
 
 def retry_later(
-    task_title: str, retry_time: str, retry_note: str = "", energy: str = "unknown"
+    task_title: str,
+    retry_time: str,
+    retry_note: str = "",
+    energy: str = "unknown",
+    auto_reschedule: bool = True,
 ) -> str:
-    """
-    Didn't start but want to try again at a specific time.
-    Sets a retry window without full panic reset.
-    """
     retry_time = parse_retry_time(retry_time)
+    retry_date = retry_time.split(" ")[0] if retry_time else None
+
     filepath = find_task_file(task_title)
 
     if filepath:
         post = frontmatter.load(filepath)
 
-        # Delete existing calendar event if one exists
+        # Delete calendar event if exists
         event_id = post.metadata.get("calendar_event_id")
         if event_id:
             from calendar_writer import delete_calendar_event
 
             delete_calendar_event(event_id)
 
+        # Update task file to unscheduled
         updates = {
             "retry_at": retry_time,
             "retry_note": retry_note if retry_note else "retrying later",
@@ -247,13 +270,96 @@ def retry_later(
             "scheduled_time": None,
             "scheduled_date": None,
             "calendar_event_id": None,
+            "planned_date": retry_date,
         }
         update_task_file(filepath, updates)
+
+        # Auto-reschedule with conflict detection
+        if auto_reschedule and retry_time:
+            try:
+                from calendar_writer import schedule_task, check_slot_conflict
+                from datetime import datetime, timedelta
+                import re
+
+                retry_dt = datetime.strptime(retry_time, "%Y-%m-%d %H:%M")
+                retry_date_str = retry_dt.strftime("%Y-%m-%d")
+
+                # Get task duration
+                duration_str = post.metadata.get(
+                    "scheduled_duration"
+                ) or post.metadata.get("duration_estimated", "60min")
+                total_minutes = 0
+                hr_match = re.search(r"([\d.]+)\s*hr", str(duration_str))
+                min_match = re.search(r"(\d+)\s*min", str(duration_str))
+                if hr_match:
+                    total_minutes += int(float(hr_match.group(1)) * 60)
+                if min_match:
+                    total_minutes += int(min_match.group(1))
+                if total_minutes == 0:
+                    total_minutes = 60
+
+                # Check for conflict at requested time
+                end_dt = retry_dt + timedelta(minutes=total_minutes)
+                conflict = check_slot_conflict(retry_dt.isoformat(), end_dt.isoformat())
+
+                if conflict["conflict"]:
+                    # Find next available slot after retry time
+                    print(
+                        f"Conflict at {retry_dt.strftime('%I:%M %p')} with '{conflict['conflicting_event']}', finding next slot..."
+                    )
+                    scheduled_start = None
+                    check_time = retry_dt
+                    for _ in range(16):  # try up to 4 hours in 15 min increments
+                        check_time = check_time + timedelta(minutes=15)
+                        check_end = check_time + timedelta(minutes=total_minutes)
+                        c = check_slot_conflict(
+                            check_time.isoformat(), check_end.isoformat()
+                        )
+                        if not c["conflict"]:
+                            scheduled_start = check_time
+                            break
+
+                    if scheduled_start:
+                        result = schedule_task(
+                            task_title=task_title,
+                            duration_minutes=total_minutes,
+                            preferred_start=scheduled_start.strftime("%H:%M"),
+                            preferred_date=retry_date_str,
+                        )
+                        if result.get("status") == "scheduled":
+                            message = f"'{task_title}' rescheduled to {result['start']} ({conflict['conflicting_event']} was at {retry_dt.strftime('%I:%M %p')})."
+                            print(message)
+                            create_checkin(
+                                doing=f"retry scheduled: {task_title}",
+                                energy=energy,
+                                notes=f"retry at {retry_time}. {retry_note}",
+                            )
+                            return message
+                else:
+                    # No conflict — schedule at requested time
+                    result = schedule_task(
+                        task_title=task_title,
+                        duration_minutes=total_minutes,
+                        preferred_start=retry_dt.strftime("%H:%M"),
+                        preferred_date=retry_date_str,
+                    )
+                    if result.get("status") == "scheduled":
+                        message = f"'{task_title}' rescheduled to {result['start']}."
+                        print(message)
+                        create_checkin(
+                            doing=f"retry scheduled: {task_title}",
+                            energy=energy,
+                            notes=f"retry at {retry_time}. {retry_note}",
+                        )
+                        return message
+
+            except Exception as e:
+                print(f"Auto-reschedule failed: {e}, falling back to unscheduled")
+
     else:
         print(f"Could not find task matching: {task_title}")
-        print("Logging checkin anyway.")
 
-    # Log checkin regardless
+    # Fallback checkin if auto-reschedule failed or wasn't attempted
     create_checkin(
         doing=f"retry scheduled: {task_title}",
         energy=energy,

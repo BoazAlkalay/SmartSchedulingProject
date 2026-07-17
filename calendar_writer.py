@@ -134,6 +134,81 @@ def find_best_slot(duration_minutes: int) -> dict:
     return None
 
 
+def check_slot_conflict(start_iso: str, end_iso: str) -> dict:
+    """
+    Check if a time slot conflicts with existing events or tasks.
+    Returns {"conflict": bool, "conflicting_event": str or None}
+    """
+    from datetime import datetime
+    import re
+    from calendar_reader import parse_event_time, get_todays_events
+    from config import TASKS, INBOX
+    import frontmatter
+
+    start_dt = datetime.fromisoformat(start_iso).replace(tzinfo=None)
+    end_dt = datetime.fromisoformat(end_iso).replace(tzinfo=None)
+    date_str = start_dt.strftime("%Y-%m-%d")
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Check Google Calendar events
+    events = get_todays_events()
+    for e in events:
+        if e["all_day"]:
+            continue
+        try:
+            e_start = parse_event_time(e["start"]).replace(tzinfo=None)
+            e_end = parse_event_time(e["end"]).replace(tzinfo=None)
+            if e_start < end_dt and e_end > start_dt:
+                return {"conflict": True, "conflicting_event": e["title"]}
+        except Exception:
+            continue
+
+    # Check vault tasks
+    for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+        post = frontmatter.load(filepath)
+        status = post.metadata.get("status", "")
+        scheduled_time = post.metadata.get("scheduled_time")
+        scheduled_date = post.metadata.get("scheduled_date", today_str)
+
+        if status != "scheduled" or not scheduled_time or scheduled_date != date_str:
+            continue
+
+        try:
+            try:
+                t_start = datetime.strptime(
+                    f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %I:%M %p"
+                )
+            except ValueError:
+                t_start = datetime.strptime(
+                    f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %H:%M"
+                )
+
+            duration = post.metadata.get("scheduled_duration") or post.metadata.get(
+                "duration_estimated", "60min"
+            )
+            total_minutes = 0
+            hr_match = re.search(r"([\d.]+)\s*hr", str(duration))
+            min_match = re.search(r"(\d+)\s*min", str(duration))
+            if hr_match:
+                total_minutes += int(float(hr_match.group(1)) * 60)
+            if min_match:
+                total_minutes += int(min_match.group(1))
+            if total_minutes == 0:
+                total_minutes = 60
+
+            t_end = t_start + timedelta(minutes=total_minutes)
+
+            if t_start < end_dt and t_end > start_dt:
+                return {
+                    "conflict": True,
+                    "conflicting_event": post.metadata.get("title", "unknown task"),
+                }
+        except Exception:
+            continue
+
+    return {"conflict": False, "conflicting_event": None}
+
+
 def create_calendar_event(
     title: str, start_iso: str, end_iso: str, description: str = "", energy: str = ""
 ) -> str:
