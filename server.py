@@ -263,6 +263,7 @@ def get_current_tasks():
                         "deadline": str(post.metadata.get("deadline", "")) or None,
                         "priority": post.metadata.get("priority", "medium"),
                         "progress": post.metadata.get("progress", ""),
+                        "created": str(post.metadata.get("created", "")) or None,
                     }
                 )
 

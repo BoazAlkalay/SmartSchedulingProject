@@ -137,6 +137,7 @@ export default function TaskPool({ onRefresh }) {
             ...t,
             planned_date: t.planned_date === "None" ? null : t.planned_date,
             deadline: t.deadline === "None" ? null : t.deadline,
+            created: t.created === "None" ? null : t.created,
             durationMinutes: parseDurationToMinutes(t.duration),
           }))
           .filter((t) => {
@@ -417,7 +418,9 @@ export default function TaskPool({ onRefresh }) {
       case "due_soon":
         return taskList.filter((t) => {
           const u = deadlineUrgency(t.deadline);
-          return u && u.days <= 7;
+          if (!u || u.days > 7) return false;
+          if (t.created === todayStr) return false;
+          return true;
         });
       case "focused":
         return taskList.filter((t) => {
