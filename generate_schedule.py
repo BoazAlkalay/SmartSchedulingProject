@@ -63,12 +63,14 @@ def get_tasks_for_scheduling(scope_days: int, target_date: str = None) -> list:
 
 def get_busy_blocks(date_str: str) -> list:
     """Get all busy time blocks for a date from Google Calendar and scheduled tasks."""
-    from calendar_reader import get_todays_events, parse_event_time
+    from calendar_reader import get_all_events, parse_event_time
 
     busy = []
 
     # Google Calendar events
-    events = get_todays_events()
+    target_date = datetime.strptime(date_str, "%Y-%m-%d")
+    days_ahead = max((target_date - datetime.now()).days + 2, 1)
+    events = get_all_events(days_ahead=days_ahead)
     for e in events:
         if e.get("all_day"):
             continue
@@ -373,10 +375,27 @@ Return ONLY the JSON array, no other text."""
 
     placements = valid_placements
 
+    # Filter out placements outside the requested date scope
+    scoped_placements = []
+    dropped_scope = []
+    for p in placements:
+        if p.get("date") in dates:
+            scoped_placements.append(p)
+        else:
+            print(
+                f"Filtered out-of-scope placement: {p.get('title')} on {p.get('date')} "
+                f"(scope was {dates})"
+            )
+            dropped_scope.append(p)
+
+    placements = scoped_placements
+
     return {
         "status": "generated",
         "scope": scope,
         "dates": dates,
         "placements": placements,
         "count": len(placements),
+        "dropped": dropped_scope,
+        "dropped_count": len(dropped_scope),
     }

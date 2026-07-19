@@ -15,6 +15,7 @@ const API = `http://${window.location.hostname}:8000`;
 let eventsCache = [];
 let bracketsCache = [];
 let ghostCache = [];
+let bracketProposalCache = [];
 
 async function fetchBrackets(dateRange) {
   const res = await fetch(`${API}/brackets`);
@@ -89,6 +90,27 @@ function ghostBlocksToFCEvents(placements) {
       type: "ghost",
       placement: p,
       ghostIndex: i,
+    },
+  }));
+}
+
+function bracketProposalsToFCEvents(proposals) {
+  if (!proposals || !Array.isArray(proposals)) return [];
+  return proposals.map((p) => ({
+    id: p.proposal_id,
+    title: `📋 ${p.name}`,
+    start: `${p.specific_date}T${p.start_time}:00`,
+    end: `${p.specific_date}T${p.end_time}:00`,
+    backgroundColor:
+      p.color === "green"
+        ? "rgba(61, 151, 95, 0.25)"
+        : "rgba(139, 46, 46, 0.25)",
+    borderColor: p.color === "green" ? "#3D6B4F" : "#8B2E2E",
+    textColor: "#1C1A17",
+    editable: true,
+    extendedProps: {
+      type: "bracket_proposal",
+      proposal: p,
     },
   }));
 }
@@ -204,6 +226,10 @@ const CalendarGrid = forwardRef(function CalendarGrid(
     onBracketCreate,
     onGhostReject,
     onGhostMove,
+    onBracketProposalEdit,
+    onBracketProposalReject,
+    onBracketProposalMove,
+    onBracketProposalResize,
   },
   ref,
 ) {
@@ -211,6 +237,7 @@ const CalendarGrid = forwardRef(function CalendarGrid(
   const [currentDateLabel, setCurrentDateLabel] = useState("");
   const [showColorKey, setShowColorKey] = useState(false);
   const ghostBlocksRef = useRef([]);
+  const bracketProposalsRef = useRef([]);
 
   useImperativeHandle(ref, () => ({
     refresh() {
@@ -279,6 +306,34 @@ const CalendarGrid = forwardRef(function CalendarGrid(
       });
       toRemove.forEach((e) => e.remove());
       api.refetchEvents();
+    },
+    setBracketProposals(proposals) {
+      bracketProposalCache = proposals;
+      bracketProposalsRef.current = proposals;
+      const api = calendarRef.current?.getApi();
+      if (!api) return;
+      bracketProposalsToFCEvents(proposals).forEach((e) => api.addEvent(e));
+    },
+    removeBracketProposal(proposalId) {
+      bracketProposalCache = bracketProposalCache.filter(
+        (p) => p.proposal_id !== proposalId,
+      );
+      bracketProposalsRef.current = bracketProposalCache;
+      const api = calendarRef.current?.getApi();
+      if (!api) return;
+      const event = api.getEventById(proposalId);
+      if (event) event.remove();
+    },
+    clearBracketProposals() {
+      bracketProposalCache = [];
+      bracketProposalsRef.current = [];
+      const api = calendarRef.current?.getApi();
+      if (!api) return;
+      const toRemove = [];
+      api.getEvents().forEach((e) => {
+        if (e.id.startsWith("proposal_")) toRemove.push(e);
+      });
+      toRemove.forEach((e) => e.remove());
     },
   }));
 
@@ -436,6 +491,10 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         }}
         eventClick={(info) => {
           info.jsEvent.preventDefault();
+          if (info.event.extendedProps.type === "bracket_proposal") {
+            if (onBracketProposalEdit)
+              onBracketProposalEdit(info.event.extendedProps.proposal);
+          }
         }}
         eventDidMount={(info) => {
           const el = info.el;
@@ -591,6 +650,95 @@ const CalendarGrid = forwardRef(function CalendarGrid(
             return;
           }
 
+          if (info.event.extendedProps.type === "bracket_proposal") {
+            const proposal = info.event.extendedProps.proposal;
+
+            // Move title to a small tab, like real brackets
+            const titleEl = el.querySelector(".fc-event-title");
+            if (titleEl) titleEl.style.display = "none";
+
+            const tab = document.createElement("div");
+            tab.className = "bracket-tab proposal-tab";
+            tab.innerHTML = info.event.title;
+            tab.style.background =
+              proposal.color === "green"
+                ? "rgba(61, 107, 79, 0.7)"
+                : "rgba(139, 46, 46, 0.7)";
+            el.appendChild(tab);
+
+            el.style.overflow = "visible";
+            el.style.zIndex = "999";
+            el.style.borderStyle = "dashed";
+            el.style.cursor = "pointer";
+            if (el.parentElement) el.parentElement.style.overflow = "visible";
+
+            const resetColors = () => {
+              el.style.backgroundColor =
+                proposal.color === "green"
+                  ? "rgba(61, 151, 95, 0.25)"
+                  : "rgba(139, 46, 46, 0.25)";
+              el.style.borderColor =
+                proposal.color === "green" ? "#3D6B4F" : "#8B2E2E";
+            };
+
+            // Desktop: right-click also opens edit modal (same entry point)
+            el.addEventListener("contextmenu", (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (onBracketProposalEdit) onBracketProposalEdit(proposal);
+            });
+
+            // Mobile: tap opens modal, long press (600ms) rejects, warning at 300ms
+            let longPressTimer = null;
+            let warningTimer = null;
+            let moved = false;
+
+            el.addEventListener("touchstart", () => {
+              moved = false;
+              warningTimer = setTimeout(() => {
+                el.style.backgroundColor = "rgba(139, 46, 46, 0.3)";
+                el.style.borderColor = "#8B2E2E";
+              }, 300);
+
+              longPressTimer = setTimeout(() => {
+                if (onBracketProposalReject)
+                  onBracketProposalReject(proposal.proposal_id);
+                longPressTimer = null;
+              }, 600);
+            });
+
+            el.addEventListener("touchmove", () => {
+              moved = true;
+              if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+              }
+              if (warningTimer) {
+                clearTimeout(warningTimer);
+                warningTimer = null;
+              }
+              resetColors();
+            });
+
+            el.addEventListener("touchend", () => {
+              if (warningTimer) {
+                clearTimeout(warningTimer);
+                warningTimer = null;
+              }
+              resetColors();
+
+              // Long press hadn't fired yet -> this was a tap, open modal
+              if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+                if (!moved && onBracketProposalEdit)
+                  onBracketProposalEdit(proposal);
+              }
+            });
+
+            return;
+          }
+
           // Hover tooltip for short tasks
           if (info.event.extendedProps.type === "task") {
             const duration = info.event.extendedProps.duration;
@@ -671,6 +819,25 @@ const CalendarGrid = forwardRef(function CalendarGrid(
             if (onGhostMove) onGhostMove(idx, date, `${hours}:${minutes}`);
             return;
           }
+
+          if (event.extendedProps.type === "bracket_proposal") {
+            const proposal = event.extendedProps.proposal;
+            const newStart = event.start;
+            const newEnd = event.end;
+            const date = `${newStart.getFullYear()}-${String(newStart.getMonth() + 1).padStart(2, "0")}-${String(newStart.getDate()).padStart(2, "0")}`;
+            const startTime = `${String(newStart.getHours()).padStart(2, "0")}:${String(newStart.getMinutes()).padStart(2, "0")}`;
+            const endTime = `${String(newEnd.getHours()).padStart(2, "0")}:${String(newEnd.getMinutes()).padStart(2, "0")}`;
+
+            if (onBracketProposalMove)
+              onBracketProposalMove(
+                proposal.proposal_id,
+                date,
+                startTime,
+                endTime,
+              );
+            return;
+          }
+
           if (event.extendedProps.type !== "task") {
             info.revert();
             return;
@@ -707,6 +874,23 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         }}
         eventResize={async (info) => {
           const { event } = info;
+          if (event.extendedProps.type === "bracket_proposal") {
+            const proposal = event.extendedProps.proposal;
+            const newStart = event.start;
+            const newEnd = event.end;
+            const date = `${newStart.getFullYear()}-${String(newStart.getMonth() + 1).padStart(2, "0")}-${String(newStart.getDate()).padStart(2, "0")}`;
+            const startTime = `${String(newStart.getHours()).padStart(2, "0")}:${String(newStart.getMinutes()).padStart(2, "0")}`;
+            const endTime = `${String(newEnd.getHours()).padStart(2, "0")}:${String(newEnd.getMinutes()).padStart(2, "0")}`;
+
+            if (onBracketProposalResize)
+              onBracketProposalResize(
+                proposal.proposal_id,
+                date,
+                startTime,
+                endTime,
+              );
+            return;
+          }
           if (event.extendedProps.type !== "task") {
             info.revert();
             return;

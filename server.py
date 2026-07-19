@@ -141,6 +141,11 @@ class GenerateScheduleRequest(BaseModel):
     target_date: Optional[str] = None
 
 
+class SuggestBracketsRequest(BaseModel):
+    context: Optional[str] = ""
+    target_date: Optional[str] = None
+
+
 # --- Endpoints ---
 
 
@@ -1043,6 +1048,20 @@ def generate_schedule_endpoint(request: GenerateScheduleRequest):
             energy=request.energy,
             context=request.context,
             target_date=request.target_date,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/suggest-brackets")
+def suggest_brackets_endpoint(request: SuggestBracketsRequest):
+    """Propose one-off brackets for a given date based on calendar, tasks, and context."""
+    try:
+        from suggest_brackets import suggest_brackets_today
+
+        result = suggest_brackets_today(
+            context=request.context, target_date=request.target_date
         )
         return result
     except Exception as e:

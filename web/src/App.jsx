@@ -9,6 +9,8 @@ import AddTaskModal from "./components/AddTaskModal";
 import BracketModal from "./components/BracketModal";
 import BracketManager from "./components/BracketManager";
 import GenerateScheduleModal from "./components/GenerateScheduleModal";
+import BracketProposalModal from "./components/BracketProposalModal";
+import SuggestBracketsModal from "./components/SuggestBracketsModal";
 
 const API = `http://${window.location.hostname}:8000`;
 
@@ -27,8 +29,12 @@ function App() {
   const [newBracket, setNewBracket] = useState(null);
   const [showBrackets, setShowBrackets] = useState(false);
   const [showGenerateSchedule, setShowGenerateSchedule] = useState(false);
+  const [showSuggestBrackets, setShowSuggestBrackets] = useState(false);
   const ghostBlocksRef2 = useRef([]);
   const [ghostCount, setGhostCount] = useState(0);
+  const bracketProposalsRef2 = useRef([]);
+  const [proposalCount, setProposalCount] = useState(0);
+  const [editingProposal, setEditingProposal] = useState(null);
 
   const handleRefresh = useCallback(() => {
     calendarGridRef.current?.refresh();
@@ -75,6 +81,67 @@ function App() {
       i === idx ? { ...b, date, start_time: startTime } : b,
     );
     calendarGridRef.current?.updateGhostBlocks(ghostBlocksRef2.current);
+  }, []);
+
+  const handleBracketProposalsGenerated = useCallback((proposals) => {
+    if (!proposals) return;
+    bracketProposalsRef2.current = proposals;
+    setProposalCount(proposals.length);
+    calendarGridRef.current?.setBracketProposals(proposals);
+    setMobileTab("calendar");
+  }, []);
+
+  const handleBracketProposalEdit = useCallback((proposal) => {
+    setEditingProposal(proposal);
+  }, []);
+
+  const handleBracketProposalReject = useCallback((proposalId) => {
+    bracketProposalsRef2.current = bracketProposalsRef2.current.filter(
+      (p) => p.proposal_id !== proposalId,
+    );
+    setProposalCount(bracketProposalsRef2.current.length);
+    calendarGridRef.current?.removeBracketProposal(proposalId);
+  }, []);
+
+  const handleBracketProposalMove = useCallback(
+    (proposalId, date, startTime, endTime) => {
+      bracketProposalsRef2.current = bracketProposalsRef2.current.map((p) =>
+        p.proposal_id === proposalId
+          ? {
+              ...p,
+              specific_date: date,
+              start_time: startTime,
+              end_time: endTime,
+            }
+          : p,
+      );
+    },
+    [],
+  );
+
+  const handleBracketProposalResize = useCallback(
+    (proposalId, date, startTime, endTime) => {
+      bracketProposalsRef2.current = bracketProposalsRef2.current.map((p) =>
+        p.proposal_id === proposalId
+          ? {
+              ...p,
+              specific_date: date,
+              start_time: startTime,
+              end_time: endTime,
+            }
+          : p,
+      );
+    },
+    [],
+  );
+
+  const handleBracketProposalAccept = useCallback((proposalId) => {
+    bracketProposalsRef2.current = bracketProposalsRef2.current.filter(
+      (p) => p.proposal_id !== proposalId,
+    );
+    setProposalCount(bracketProposalsRef2.current.length);
+    calendarGridRef.current?.removeBracketProposal(proposalId);
+    calendarGridRef.current?.refresh();
   }, []);
 
   return (
@@ -260,6 +327,10 @@ function App() {
             onBracketCreate={handleBracketCreate}
             onGhostReject={handleGhostReject}
             onGhostMove={handleGhostMove}
+            onBracketProposalEdit={handleBracketProposalEdit}
+            onBracketProposalReject={handleBracketProposalReject}
+            onBracketProposalMove={handleBracketProposalMove}
+            onBracketProposalResize={handleBracketProposalResize}
           />
         </section>
 
@@ -307,6 +378,12 @@ function App() {
             onClick={() => setShowGenerateSchedule(true)}
           >
             ✨ Generate
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => setShowSuggestBrackets(true)}
+          >
+            📋 Suggest Brackets
           </button>
 
           {showWhatNow && window.innerWidth <= 1024 && (
@@ -389,6 +466,41 @@ function App() {
           onGenerated={handleGenerated}
           currentEnergy={energy}
         />
+      )}
+
+      {showSuggestBrackets && (
+        <SuggestBracketsModal
+          onClose={() => setShowSuggestBrackets(false)}
+          onGenerated={handleBracketProposalsGenerated}
+          targetDate={viewedDate}
+        />
+      )}
+
+      {editingProposal && (
+        <BracketProposalModal
+          proposal={editingProposal}
+          onClose={() => setEditingProposal(null)}
+          onAccept={handleBracketProposalAccept}
+          onReject={handleBracketProposalReject}
+        />
+      )}
+
+      {proposalCount > 0 && (
+        <div className="ghost-action-bar">
+          <span className="ghost-count">
+            📋 {proposalCount} suggested brackets
+          </span>
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              bracketProposalsRef2.current = [];
+              setProposalCount(0);
+              calendarGridRef.current?.clearBracketProposals();
+            }}
+          >
+            Reject All
+          </button>
+        </div>
       )}
 
       {ghostCount > 0 && (
