@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import "./App.css";
 import CalendarGrid from "./components/CalendarGrid";
 import TaskPool from "./components/TaskPool";
@@ -11,6 +11,7 @@ import BracketManager from "./components/BracketManager";
 import GenerateScheduleModal from "./components/GenerateScheduleModal";
 import BracketProposalModal from "./components/BracketProposalModal";
 import SuggestBracketsModal from "./components/SuggestBracketsModal";
+import HabitsList from "./components/HabitsList";
 
 const API = `http://${window.location.hostname}:8000`;
 
@@ -35,6 +36,8 @@ function App() {
   const bracketProposalsRef2 = useRef([]);
   const [proposalCount, setProposalCount] = useState(0);
   const [editingProposal, setEditingProposal] = useState(null);
+  const [habitBadgeCount, setHabitBadgeCount] = useState(0);
+  const [showHabits, setShowHabits] = useState(false);
 
   const handleRefresh = useCallback(() => {
     calendarGridRef.current?.refresh();
@@ -143,6 +146,22 @@ function App() {
     calendarGridRef.current?.removeBracketProposal(proposalId);
     calendarGridRef.current?.refresh();
   }, []);
+
+  const refreshHabitBadge = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/habits/today`);
+      const data = await res.json();
+      setHabitBadgeCount(data.badge_count || 0);
+    } catch (err) {
+      console.error("Failed to fetch habit badge:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshHabitBadge();
+    const interval = setInterval(refreshHabitBadge, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [refreshHabitBadge]);
 
   return (
     <div className="app">
@@ -335,27 +354,81 @@ function App() {
         </section>
 
         <aside
+          className={`habits-panel ${mobileTab === "habits" ? "mobile-active" : ""}`}
+        >
+          <h2>Habits</h2>
+          <HabitsList onToggled={refreshHabitBadge} />
+        </aside>
+
+        <aside
           className={`quick-panel ${mobileTab === "actions" ? "mobile-active" : ""}`}
         >
           <h2>Quick Actions</h2>
 
+          <div className="quick-panel-section">
+            <div className="quick-panel-section-label">Daily Ritual</div>
+            <div className="quick-panel-row">
+              <button
+                className="btn-ghost"
+                onClick={() => setShowSuggestBrackets(true)}
+              >
+                📋 Suggest
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => setShowGenerateSchedule(true)}
+              >
+                ✨ Generate
+              </button>
+            </div>
+          </div>
+
+          <div className="quick-panel-section">
+            <div className="quick-panel-section-label">Quick Actions</div>
+            <button
+              className="btn-primary"
+              onClick={() => setShowWhatNow(!showWhatNow)}
+            >
+              What Now
+            </button>
+            <div className="quick-panel-row">
+              <button
+                className="btn-ghost"
+                onClick={() => setShowCheckIn(true)}
+              >
+                Check In
+              </button>
+              <button
+                className="btn-ghost"
+                onClick={() => setShowAddTask(true)}
+              >
+                Add Task
+              </button>
+            </div>
+          </div>
+
+          <div className="quick-panel-section">
+            <div className="quick-panel-section-label">Manage</div>
+            <div className="quick-panel-row">
+              <button
+                className="btn-ghost"
+                onClick={() => setShowBrackets(true)}
+              >
+                ⬡ Brackets
+              </button>
+              {window.innerWidth > 1024 && (
+                <button
+                  className="btn-ghost"
+                  onClick={() => setShowHabits(true)}
+                >
+                  🔁 Habits {habitBadgeCount > 0 && `(${habitBadgeCount})`}
+                </button>
+              )}
+            </div>
+          </div>
+
           <button
-            className="btn-primary"
-            onClick={() => setShowWhatNow(!showWhatNow)}
-          >
-            What Now
-          </button>
-
-          <button className="btn-ghost" onClick={() => setShowCheckIn(true)}>
-            Check In
-          </button>
-
-          <button className="btn-ghost" onClick={() => setShowAddTask(true)}>
-            Add Task
-          </button>
-
-          <button
-            className="btn-danger"
+            className="btn-danger quick-panel-panic"
             onClick={async () => {
               if (!confirm("Reset all scheduled tasks? No judgment.")) return;
               await fetch(`${API}/panic`, {
@@ -367,23 +440,6 @@ function App() {
             }}
           >
             Panic
-          </button>
-
-          <button className="btn-ghost" onClick={() => setShowBrackets(true)}>
-            ⬡ Brackets
-          </button>
-
-          <button
-            className="btn-primary"
-            onClick={() => setShowGenerateSchedule(true)}
-          >
-            ✨ Generate
-          </button>
-          <button
-            className="btn-ghost"
-            onClick={() => setShowSuggestBrackets(true)}
-          >
-            📋 Suggest Brackets
           </button>
 
           {showWhatNow && window.innerWidth <= 1024 && (
@@ -400,12 +456,25 @@ function App() {
           <span className="mobile-tab-icon">📋</span>
           Tasks
         </button>
+
         <button
           className={`mobile-tab ${mobileTab === "calendar" ? "active" : ""}`}
           onClick={() => setMobileTab("calendar")}
         >
           <span className="mobile-tab-icon">📅</span>
           Calendar
+        </button>
+        <button
+          className={`mobile-tab ${mobileTab === "habits" ? "active" : ""}`}
+          onClick={() => setMobileTab("habits")}
+        >
+          <span className="mobile-tab-icon">
+            🔁
+            {habitBadgeCount > 0 && (
+              <span className="tab-badge">{habitBadgeCount}</span>
+            )}
+          </span>
+          Habits
         </button>
         <button
           className={`mobile-tab ${mobileTab === "actions" ? "active" : ""}`}
@@ -483,6 +552,26 @@ function App() {
           onAccept={handleBracketProposalAccept}
           onReject={handleBracketProposalReject}
         />
+      )}
+
+      {showHabits && (
+        <>
+          <div className="modal-overlay" onClick={() => setShowHabits(false)} />
+          <div className="modal">
+            <div className="modal-header">
+              <span className="modal-title">🔁 Habits</span>
+              <button
+                className="modal-close"
+                onClick={() => setShowHabits(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <HabitsList onToggled={refreshHabitBadge} />
+            </div>
+          </div>
+        </>
       )}
 
       {proposalCount > 0 && (

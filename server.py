@@ -146,6 +146,16 @@ class SuggestBracketsRequest(BaseModel):
     target_date: Optional[str] = None
 
 
+class CreateHabitRequest(BaseModel):
+    title: str
+    period: str  # morning | afternoon | evening
+
+
+class ToggleHabitRequest(BaseModel):
+    habit_id: str
+    date_str: Optional[str] = None
+
+
 # --- Endpoints ---
 
 
@@ -1064,6 +1074,54 @@ def suggest_brackets_endpoint(request: SuggestBracketsRequest):
             context=request.context, target_date=request.target_date
         )
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/habits")
+def create_habit_endpoint(request: CreateHabitRequest):
+    """Create a new habit."""
+    try:
+        from habit_manager import create_habit
+
+        habit = create_habit(request.title, request.period)
+        return {"status": "created", "habit": habit}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/habits/today")
+def get_habits_today(date_str: Optional[str] = None):
+    """Return all active habits with today's completion status, current period, and badge count."""
+    try:
+        from habit_manager import (
+            get_habits,
+            get_today_status,
+            get_current_period,
+            get_badge_count,
+        )
+
+        habits = get_habits()
+        status = get_today_status(date_str)
+        for h in habits:
+            h["done"] = status.get(h["id"], False)
+        return {
+            "habits": habits,
+            "current_period": get_current_period(),
+            "badge_count": get_badge_count(date_str),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/habits/toggle")
+def toggle_habit_endpoint(request: ToggleHabitRequest):
+    """Toggle a habit's completion status for today (or a given date)."""
+    try:
+        from habit_manager import toggle_habit
+
+        new_status = toggle_habit(request.habit_id, request.date_str)
+        return {"status": "toggled", "done": new_status}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -1,7 +1,6 @@
 from pathlib import Path
 import os
 
-
 # Detect which machine we're on by username
 username = os.getlogin()
 
@@ -19,7 +18,7 @@ CONTEXT = VAULT_PATH / "system/context.md"
 OBSERVATIONS = VAULT_PATH / "system/observations.md"
 COMPLAINTS = VAULT_PATH / "system/complaints.md"
 SOFT_SCHEDULE = VAULT_PATH / "system/soft_schedule.md"
-IDEAS = VAULT_PATH / "system/ideas.md" 
+IDEAS = VAULT_PATH / "system/ideas.md"
 
 # Task folders
 INBOX = VAULT_PATH / "inbox"
@@ -42,3 +41,11 @@ DND = PERSONAL / "dnd"
 # LLM Models
 RUNTIME_MODEL = "claude-haiku-4-5-20251001"
 REFINEMENT_MODEL = "claude-sonnet-4-6"
+
+# Habit period boundaries (24hr HH:MM)
+HABIT_PERIODS = {
+    "morning": ("05:00", "12:00"),
+    "afternoon": ("12:00", "17:00"),
+    "evening": ("19:30", "23:00"),
+}
+# current gap between 5pm and 7:30pm
