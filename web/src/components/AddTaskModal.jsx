@@ -105,10 +105,12 @@ export default function AddTaskModal({ onClose, onRefresh }) {
           task_title: exactTitle,
           duration_minutes: duration,
           preferred_start: scheduleAtTime,
-          preferred_date: null,
+          preferred_date: parsed.deadline || null,
         }),
       });
-      setResult(`Scheduled for ${scheduleAtTime}`);
+      setResult(
+        `Scheduled for ${scheduleAtTime}${parsed.deadline ? ` on ${parsed.deadline}` : ""}`,
+      );
     } else if (scheduleMode === "now") {
       const now = new Date();
       const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;

@@ -285,6 +285,7 @@ Rules:
 12. Working hours are 8am-10pm unless brackets suggest otherwise
 13. Current user energy is {energy_desc} — adjust task difficulty accordingly
 14. Some tasks are split into linked parts (titles ending in "(Part 1)", "(Part 2)", etc.) — if both a task and its earlier part(s) are being scheduled today, always place the earlier part at an earlier time than the later part, with at least 15 minutes between them for a break
+15. If a task's deadline includes a specific time (e.g. deadline:2026-07-21T15:00), it MUST be placed so it fully finishes (start_time + duration) before that time on that date — this is a hard constraint, stricter than the general "deadlines get priority" rule
 
 Return a JSON array like this:
 [
@@ -391,6 +392,35 @@ Return ONLY the JSON array, no other text."""
 
     placements = scoped_placements
 
+    # Build title -> deadline lookup for the strict time-deadline filter
+    deadline_lookup = {t["title"]: t["deadline"] for t in tasks if t.get("deadline")}
+
+    # Filter out placements that violate a hard time-deadline
+    deadline_ok_placements = []
+    dropped_deadline = []
+    for p in placements:
+        deadline = deadline_lookup.get(p.get("title"))
+        if deadline and "T" in str(deadline):
+            deadline_date, deadline_time = deadline.split("T")
+            if p.get("date") == deadline_date:
+                try:
+                    start_h, start_m = map(int, p["start_time"].split(":"))
+                    end_minutes = start_h * 60 + start_m + p["duration_minutes"]
+                    deadline_h, deadline_m = map(int, deadline_time.split(":"))
+                    deadline_minutes = deadline_h * 60 + deadline_m
+                    if end_minutes > deadline_minutes:
+                        print(
+                            f"Filtered placement violating time deadline: {p.get('title')} "
+                            f"would end after {deadline_time} deadline"
+                        )
+                        dropped_deadline.append(p)
+                        continue
+                except Exception:
+                    pass
+        deadline_ok_placements.append(p)
+
+    placements = deadline_ok_placements
+
     return {
         "status": "generated",
         "scope": scope,
@@ -399,4 +429,6 @@ Return ONLY the JSON array, no other text."""
         "count": len(placements),
         "dropped": dropped_scope,
         "dropped_count": len(dropped_scope),
+        "dropped_deadline": dropped_deadline,
+        "dropped_deadline_count": len(dropped_deadline),
     }

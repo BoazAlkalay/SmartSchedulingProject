@@ -29,17 +29,33 @@ function deadlineUrgency(deadline) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // Split off an optional time component (YYYY-MM-DDTHH:MM) before parsing the date
+  const [datePart, timePart] = deadline.split("T");
+
   // Parse as local date to avoid UTC offset issue
-  const [year, month, day] = deadline.split("-").map(Number);
+  const [year, month, day] = datePart.split("-").map(Number);
   const due = new Date(year, month - 1, day);
 
   const days = Math.round((due - today) / 86400000);
+
+  const formatTime = () => {
+    if (!timePart) return "";
+    const [h, m] = timePart.split(":").map(Number);
+    const period = h >= 12 ? "PM" : "AM";
+    const hour12 = h % 12 === 0 ? 12 : h % 12;
+    return ` by ${hour12}:${String(m).padStart(2, "0")} ${period}`;
+  };
+
   if (days < 0) return { label: "Overdue", color: "#8B2E2E", days };
-  if (days === 0) return { label: "Due today", color: "#C4832A", days };
-  if (days === 1) return { label: "Due tomorrow", color: "#D4A843", days };
-  if (days <= 3) return { label: `Due in ${days}d`, color: "#D4A843", days };
-  if (days <= 7) return { label: `Due in ${days}d`, color: "#6B6560", days };
-  return { label: `Due in ${days}d`, color: "#6B6560", days };
+  if (days === 0)
+    return { label: `Due today${formatTime()}`, color: "#C4832A", days };
+  if (days === 1)
+    return { label: `Due tomorrow${formatTime()}`, color: "#D4A843", days };
+  if (days <= 3)
+    return { label: `Due in ${days}d${formatTime()}`, color: "#D4A843", days };
+  if (days <= 7)
+    return { label: `Due in ${days}d${formatTime()}`, color: "#6B6560", days };
+  return { label: `Due in ${days}d${formatTime()}`, color: "#6B6560", days };
 }
 
 function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {

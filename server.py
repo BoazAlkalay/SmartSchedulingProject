@@ -184,30 +184,15 @@ def get_what_now(request: WhatNowRequest):
 
 @app.post("/add-task")
 def add_task_endpoint(request: AddTaskRequest):
-    """Add a new task from natural language."""
+    """Add one or more new tasks from natural language."""
     try:
-        from task_entry import parse_task_from_text, create_task_file, title_exists
-
-        task_data = parse_task_from_text(request.text)
-
-        if task_data is None:
+        filepaths = add_task(request.text)
+        if not filepaths:
             raise HTTPException(status_code=400, detail="Failed to parse task.")
-
-        title = task_data.get("title", "").replace("_", " ").strip()
-
-        # checks for duplicates
-        if not request.force and title_exists(title):
-            return {
-                "status": "duplicate",
-                "title": title,
-                "message": f"A task called '{title}' already exists.",
-            }
-
-        filepath = create_task_file(task_data)
         return {
             "status": "created",
-            "file": str(filepath),
-            "title": task_data.get("title", "").replace("_", " ").strip(),
+            "count": len(filepaths),
+            "files": [str(fp) for fp in filepaths],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
