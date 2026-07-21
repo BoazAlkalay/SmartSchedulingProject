@@ -13,6 +13,26 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
   const [submitting, setSubmitting] = React.useState(false);
   const [remaining, setRemaining] = React.useState("");
 
+  const menuRef = React.useRef(null);
+  const [menuStyle, setMenuStyle] = React.useState({});
+
+  React.useEffect(() => {
+    if (!menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const margin = 8;
+    let top = y;
+    let left = x;
+
+    if (top + rect.height > window.innerHeight - margin) {
+      top = Math.max(margin, window.innerHeight - rect.height - margin);
+    }
+    if (left + rect.width > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - rect.width - margin);
+    }
+
+    setMenuStyle({ top, left });
+  }, [x, y, view]);
+
   if (!event) return null;
 
   const isTask = event.extendedProps.type === "task";
@@ -99,7 +119,11 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
   return (
     <>
       <div className="context-overlay" onClick={onClose} />
-      <div className="context-menu" style={{ top: y, left: x }}>
+      <div
+        ref={menuRef}
+        className="context-menu"
+        style={{ top: menuStyle.top ?? y, left: menuStyle.left ?? x }}
+      >
         <div className="context-title">{title}</div>
 
         {/* Main menu */}

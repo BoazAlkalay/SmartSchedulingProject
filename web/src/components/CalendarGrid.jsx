@@ -744,17 +744,30 @@ const CalendarGrid = forwardRef(function CalendarGrid(
             const duration = info.event.extendedProps.duration;
             if (duration) {
               const mins = parseDurationString(duration);
+
               if (mins <= 10) {
+                // Too short for even the time range to fit — hide both
+                // default parts, show title + time together in a tooltip
                 el.style.overflow = "visible";
-                // Hide the default text since it's unreadable at this size
                 const titleEl = el.querySelector(".fc-event-title");
-                if (titleEl) titleEl.style.display = "none";
                 const timeEl = el.querySelector(".fc-event-time");
+                const timeRangeText = timeEl ? timeEl.textContent : "";
+                if (titleEl) titleEl.style.display = "none";
                 if (timeEl) timeEl.style.display = "none";
 
                 const tooltip = document.createElement("div");
                 tooltip.className = "short-task-tooltip";
-                tooltip.innerHTML = `${info.event.title}<br><span style="opacity:0.7;font-size:10px">${duration}</span>`;
+                tooltip.innerHTML = `${info.event.title}<br><span style="opacity:0.7;font-size:10px">${timeRangeText}</span>`;
+                el.appendChild(tooltip);
+              } else if (mins <= 20) {
+                // Time range fits fine at this size — only the title needs help
+                el.style.overflow = "visible";
+                const titleEl = el.querySelector(".fc-event-title");
+                if (titleEl) titleEl.style.display = "none";
+
+                const tooltip = document.createElement("div");
+                tooltip.className = "short-task-tooltip";
+                tooltip.innerHTML = info.event.title;
                 el.appendChild(tooltip);
               }
             }

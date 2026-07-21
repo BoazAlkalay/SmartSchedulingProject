@@ -148,12 +148,31 @@ export default function TaskPool({ onRefresh, viewedDate }) {
   const [tasks, setTasks] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [taskMenu, setTaskMenu] = React.useState(null);
+  const menuRef = React.useRef(null);
+  const [menuStyle, setMenuStyle] = React.useState({});
   const [filter, setFilter] = React.useState("all");
   const [plannedLater, setPlannedLater] = React.useState([]);
   const [showPlannedLater, setShowPlannedLater] = React.useState(false);
 
   const containerRef = useRef(null);
   const longPressTimer = useRef(null);
+
+  React.useEffect(() => {
+    if (!taskMenu || !menuRef.current) return;
+    const rect = menuRef.current.getBoundingClientRect();
+    const margin = 8;
+    let top = taskMenu.y;
+    let left = taskMenu.x;
+
+    if (top + rect.height > window.innerHeight - margin) {
+      top = Math.max(margin, window.innerHeight - rect.height - margin);
+    }
+    if (left + rect.width > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - rect.width - margin);
+    }
+
+    setMenuStyle({ top, left });
+  }, [taskMenu]);
 
   const today = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -790,8 +809,12 @@ export default function TaskPool({ onRefresh, viewedDate }) {
           <div className="context-overlay" onClick={() => setTaskMenu(null)} />
 
           <div
+            ref={menuRef}
             className="context-menu"
-            style={{ top: taskMenu.y, left: taskMenu.x }}
+            style={{
+              top: menuStyle.top ?? taskMenu.y,
+              left: menuStyle.left ?? taskMenu.x,
+            }}
           >
             <div className="context-title">{taskMenu.task.title}</div>
 
