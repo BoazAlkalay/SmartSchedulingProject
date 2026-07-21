@@ -217,6 +217,21 @@ def parse_task_endpoint(request: AddTaskRequest):
         if task_data is None:
             raise HTTPException(status_code=400, detail="Failed to parse task.")
 
+        if isinstance(task_data, list):
+            summaries = []
+            for t in task_data:
+                summaries.append(
+                    f"Title: {t.get('title', '?')}\n"
+                    f"Duration: {t.get('duration_estimated', '?')}\n"
+                    f"Energy: {t.get('energy_required', '?')}"
+                )
+            return {
+                "status": "parsed",
+                "multi": True,
+                "tasks": task_data,
+                "summary": "\n\n".join(summaries),
+            }
+
         summary = f"""Title: {task_data.get('title', '?')}
 Duration: {task_data.get('duration_estimated', '?')}
 Energy: {task_data.get('energy_required', '?')}
@@ -225,7 +240,12 @@ Deadline: {task_data.get('deadline', 'none')}
 Folder: {task_data.get('folder', '?')}
 Tags: {', '.join(task_data.get('tags', []))}"""
 
-        return {"status": "parsed", "task": task_data, "summary": summary}
+        return {
+            "status": "parsed",
+            "multi": False,
+            "task": task_data,
+            "summary": summary,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -742,7 +762,9 @@ def whats_coming(scope: str = "today_remaining"):
                 if task_dt < window_start or task_dt > window_end:
                     continue
 
-            duration = post.metadata.get("duration_estimated", "")
+            duration = post.metadata.get("scheduled_duration") or post.metadata.get(
+                "duration_estimated", ""
+            )
             energy = post.metadata.get("energy_required", "unknown")
 
             items.append(

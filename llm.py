@@ -5,31 +5,24 @@ from system_reader import load_runtime_context
 from config import RUNTIME_MODEL, REFINEMENT_MODEL
 
 # Anthropic client as fallback
-anthropic_client = anthropic.Anthropic(
-    api_key=os.environ.get("ANTHROPIC_API_KEY")
-)
+anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+
 
 def ask_ollama(prompt: str, system_prompt: str = "") -> str:
     messages = []
-    
+
     if system_prompt:
         # Keep system prompt lean for local model
-        messages.append({
-            "role": "system",
-            "content": system_prompt[:1500]  # trim if too long
-        })
-    
-    messages.append({
-        "role": "user",
-        "content": prompt
-    })
-    
-    response = ollama.chat(
-        model="mistral",
-        messages=messages
-    )
-    
+        messages.append(
+            {"role": "system", "content": system_prompt[:1500]}  # trim if too long
+        )
+
+    messages.append({"role": "user", "content": prompt})
+
+    response = ollama.chat(model="mistral", messages=messages)
+
     return response["message"]["content"]
+
 
 def ask_anthropic(prompt: str, system_prompt: str = "") -> str:
     """
@@ -37,13 +30,12 @@ def ask_anthropic(prompt: str, system_prompt: str = "") -> str:
     """
     message = anthropic_client.messages.create(
         model=RUNTIME_MODEL,
-        max_tokens=1024,
+        max_tokens=4096,
         system=system_prompt,
-        messages=[
-            {"role": "user", "content": prompt}
-        ]
+        messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text
+
 
 def ask(user_message: str, include_system: bool = True, use_local: bool = False) -> str:
     """
@@ -51,7 +43,7 @@ def ask(user_message: str, include_system: bool = True, use_local: bool = False)
     Tries Ollama first, falls back to Anthropic if it fails.
     """
     system_prompt = ""
-    
+
     if include_system:
         runtime = load_runtime_context()
         system_prompt = f"""You are a personal scheduling assistant.
@@ -77,10 +69,10 @@ Always follow these instructions when responding."""
     else:
         return ask_anthropic(user_message, system_prompt)
 
+
 if __name__ == "__main__":
     print("Testing Ollama connection...\n")
     response = ask(
-        "I have 45 minutes free right now. What should I do?",
-        use_local=True
+        "I have 45 minutes free right now. What should I do?", use_local=True
     )
     print(response)

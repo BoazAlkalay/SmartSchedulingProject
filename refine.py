@@ -296,7 +296,7 @@ Return ONLY the markdown document, no preamble."""
 
     message = client.messages.create(
         model=REFINEMENT_MODEL,
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[{"role": "user", "content": prompt}],
     )
 

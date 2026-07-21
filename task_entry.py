@@ -3,7 +3,7 @@ import re
 import frontmatter
 import uuid
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from llm import ask
 from config import INBOX, TASKS, RUNTIME_MODEL
 
@@ -36,15 +36,37 @@ def parse_task_from_text(raw_text: str) -> dict:
     """
 
     now = datetime.now()
-    today = now.strftime("%Y-%m-%d")
-    day_of_week = now.strftime("%A").lower()
-    current_time = now.strftime("%H:%M")
+
+    # If it's the early hours (before ~3am), treat it as still "last night" —
+    # relative date words like "today"/"tomorrow"/"next Monday" should follow
+    # the day the person feels like they're in, not the literal calendar date.
+    effective_now = now - timedelta(hours=3) if now.hour < 3 else now
+
+    today = effective_now.strftime("%Y-%m-%d")
+    day_of_week = effective_now.strftime("%A").lower()
+    current_time = now.strftime("%H:%M")  # actual clock time, unshifted
+
+    weekday_names = [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ]
+    next_weekdays = {}
+    for i, name in enumerate(weekday_names):
+        days_ahead = (i - effective_now.weekday()) % 7 or 7
+        next_weekdays[name] = (effective_now + timedelta(days=days_ahead)).strftime(
+            "%Y-%m-%d"
+        )
 
     prompt = f"""
 Today is {today} ({day_of_week}) and the current time is {current_time}.
 When the user says "today" the deadline is exactly {today}.
-When the user says "tomorrow" the deadline is exactly {(now + __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")}.
-When the user says "this week" the deadline is the coming Sunday.
+When the user says "tomorrow" the deadline is exactly {(effective_now + timedelta(days=1)).strftime("%Y-%m-%d")}.When the user says "this week" the deadline is the coming Sunday.
+When the user says "next Monday" the deadline is exactly {next_weekdays["monday"]}. When the user says "next Tuesday" the deadline is exactly {next_weekdays["tuesday"]}. When the user says "next Wednesday" the deadline is exactly {next_weekdays["wednesday"]}. When the user says "next Thursday" the deadline is exactly {next_weekdays["thursday"]}. When the user says "next Friday" the deadline is exactly {next_weekdays["friday"]}. When the user says "next Saturday" the deadline is exactly {next_weekdays["saturday"]}. When the user says "next Sunday" the deadline is exactly {next_weekdays["sunday"]}.
 If the user mentions a specific time (e.g. "at 3pm", "tonight at 8", "tomorrow morning at 9"), extract it as parsed_datetime in ISO format combining the resolved date and time.
 If the user says a time like "at 6" or "at 9" with no AM/PM specified:
 - If that time is more than 1 hour in the future today, assume today
@@ -54,6 +76,8 @@ If the user says a time like "at 6" or "at 9" with no AM/PM specified:
 
 If the person implies working on or starting this task on a DIFFERENT day than its deadline (e.g. "prep the presentation Wednesday, it's due Friday"), set suggested_schedule_date to that earlier working day. Only set this when such a distinction is actually implied — leave it null if the deadline and the intended working day are the same, or if no scheduling day was mentioned at all.
 
+If the input specifies a total time range to complete across multiple chunks (e.g. "4-6 hours split into 25 and 45 minute chunks"), you MUST generate enough chunks so their combined duration_estimated sums to within that stated range — do not stop early just because a few tasks feel sufficient. If the input asks to spread tasks across a time period (e.g. "throughout the week"), assign DIFFERENT deadline and planned_date values across multiple distinct days within that period — do not put every task on the same day.
+
 Parse the following into a task. Return ONLY a JSON object with these exact fields:
 {{
     "title": "task title",
@@ -61,6 +85,7 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "priority": "low, medium, high, or critical",
     "deadline": "YYYY-MM-DD or null",
     "planned_date": "YYYY-MM-DD or null",
+    "suggested_schedule_date": "YYYY-MM-DD or null",
     "recurrence": "preserve exact frequency e.g. 'every week', 'twice a day', 'every 3 days', 'on mondays and wednesdays', or null",
     "energy_required": "cantrip, low, medium, high, or deep",
     "slot_level": 0-9,
@@ -82,14 +107,14 @@ No explanation, no markdown, just the JSON object.
 Input: {raw_text}
 """
     response = ask(prompt)
-    cleaned = clean_json_response(response)
+    tasks = parse_llm_task_response(response)
 
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        print(f"Failed to parse LLM response as JSON: {e}")
+    if not tasks:
+        print(f"Failed to parse LLM response as JSON")
         print(f"Raw response: {response}")
         return None
+
+    return tasks[0] if len(tasks) == 1 else tasks
 
 
 def create_task_file(task_data: dict, destination: Path = None) -> Path:
@@ -246,18 +271,43 @@ def add_task(raw_text: str) -> list:
     print(f"Parsing: '{raw_text}'")
 
     now = datetime.now()
-    today = now.strftime("%Y-%m-%d")
-    day_of_week = now.strftime("%A").lower()
-    current_time = now.strftime("%H:%M")
+
+    # If it's the early hours (before ~3am), treat it as still "last night" —
+    # relative date words like "today"/"tomorrow"/"next Monday" should follow
+    # the day the person feels like they're in, not the literal calendar date.
+    effective_now = now - timedelta(hours=3) if now.hour < 3 else now
+
+    today = effective_now.strftime("%Y-%m-%d")
+    day_of_week = effective_now.strftime("%A").lower()
+    current_time = now.strftime("%H:%M")  # actual clock time, unshifted
+
+    weekday_names = [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ]
+    next_weekdays = {}
+    for i, name in enumerate(weekday_names):
+        days_ahead = (i - effective_now.weekday()) % 7 or 7
+        next_weekdays[name] = (effective_now + timedelta(days=days_ahead)).strftime(
+            "%Y-%m-%d"
+        )
 
     prompt = f"""
 Today is {today} ({day_of_week}) and the current time is {current_time}.
 When the user says "today" the deadline is exactly {today}.
-When the user says "tomorrow" the deadline is exactly {(now + __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")}.
+When the user says "tomorrow" the deadline is exactly {(effective_now + timedelta(days=1)).strftime("%Y-%m-%d")}.
 When the user says "this week" the deadline is the coming Sunday.
+When the user says "next Monday" the deadline is exactly {next_weekdays["monday"]}. When the user says "next Tuesday" the deadline is exactly {next_weekdays["tuesday"]}. When the user says "next Wednesday" the deadline is exactly {next_weekdays["wednesday"]}. When the user says "next Thursday" the deadline is exactly {next_weekdays["thursday"]}. When the user says "next Friday" the deadline is exactly {next_weekdays["friday"]}. When the user says "next Saturday" the deadline is exactly {next_weekdays["saturday"]}. When the user says "next Sunday" the deadline is exactly {next_weekdays["sunday"]}.
 If the user mentions a specific time the task is due by (e.g. "by 3pm", "before my 2pm meeting", "due at noon"), include that time in the deadline using YYYY-MM-DDTHH:MM (24-hour format), e.g. "2026-07-26T15:00". If no specific time is mentioned, use YYYY-MM-DD only.
 
 If the person implies working on or starting this task on a DIFFERENT day than its deadline (e.g. "prep the presentation Wednesday, it's due Friday"), set suggested_schedule_date to that earlier working day. Only set this when such a distinction is actually implied — leave it null if the deadline and the intended working day are the same, or if no scheduling day was mentioned at all.
+
+If the input specifies a total time range to complete across multiple chunks (e.g. "4-6 hours split into 25 and 45 minute chunks"), you MUST generate enough chunks so their combined duration_estimated sums to within that stated range — do not stop early just because a few tasks feel sufficient. If the input asks to spread tasks across a time period (e.g. "throughout the week"), assign DIFFERENT deadline and planned_date values across multiple distinct days within that period — do not put every task on the same day.
 
 Parse the following into a task. Return ONLY a JSON object with these exact fields:
 {{
@@ -270,6 +320,7 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "slot_level": 0-9,
     "preferred_days": ["monday", "wednesday"] or [],
     "preferred_time": "e.g. morning or null",
+    "planned_date": "YYYY-MM-DD or null",
     "suggested_schedule_date": "YYYY-MM-DD or null",
     "blocked_by": [],
     "tags": ["tag1", "tag2"],

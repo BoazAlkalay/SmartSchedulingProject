@@ -145,20 +145,54 @@ def stopping_now(
     if filepath:
         post = frontmatter.load(filepath)
 
-        # Truncate calendar event to current time
         event_id = post.metadata.get("calendar_event_id")
+        truncate_succeeded = True
         if event_id:
             from calendar_writer import truncate_calendar_event
 
-            truncate_calendar_event(event_id)
+            truncate_succeeded = truncate_calendar_event(event_id)
+
+        # Compute actual elapsed time to reflect the truncation in the file too
+        scheduled_time = post.metadata.get("scheduled_time")
+        scheduled_date = post.metadata.get(
+            "scheduled_date", datetime.now().strftime("%Y-%m-%d")
+        )
+        elapsed_str = None
+        if scheduled_time:
+            try:
+                try:
+                    start = datetime.strptime(
+                        f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %I:%M %p"
+                    )
+                except ValueError:
+                    start = datetime.strptime(
+                        f"{scheduled_date} {scheduled_time}", "%Y-%m-%d %H:%M"
+                    )
+                elapsed_minutes = max(
+                    1, round((datetime.now() - start).total_seconds() / 60)
+                )
+                elapsed_str = f"{elapsed_minutes}min"
+            except Exception:
+                pass
 
         updates = {
             "status": "in-progress",
             "progress": progress,
             "remaining": remaining,
             "continuation_note": continuation_note,
-            "calendar_event_id": None,  # clear since event is now historical
         }
+
+        if elapsed_str:
+            updates["scheduled_duration"] = elapsed_str
+
+        if truncate_succeeded:
+            updates["calendar_event_id"] = None
+        else:
+            print(
+                f"Warning: could not truncate calendar event for '{task_title}' — "
+                "keeping calendar_event_id so it isn't orphaned."
+            )
+
         update_task_file(filepath, updates)
     else:
         print(f"Could not find task matching: {task_title}")

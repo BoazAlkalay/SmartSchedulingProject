@@ -18,6 +18,7 @@ export default function AddTaskModal({ onClose, onRefresh }) {
   const [result, setResult] = React.useState("");
   const [showScheduleAt, setShowScheduleAt] = React.useState(false);
   const [scheduleAtTime, setScheduleAtTime] = React.useState("");
+  const [parsedTasks, setParsedTasks] = React.useState(null);
 
   async function handleParse() {
     if (!text.trim()) return;
@@ -32,7 +33,13 @@ export default function AddTaskModal({ onClose, onRefresh }) {
       });
       const data = await res.json();
       if (data.status === "parsed") {
-        setParsed(data.task);
+        if (data.multi) {
+          setParsedTasks(data.tasks);
+          setParsed(null);
+        } else {
+          setParsed(data.task);
+          setParsedTasks(null);
+        }
         setStep(STEPS.PREVIEW);
       } else {
         setError("Failed to parse task. Try again.");
@@ -132,6 +139,29 @@ export default function AddTaskModal({ onClose, onRefresh }) {
       setResult("Added to unscheduled.");
     }
 
+    setStep(STEPS.DONE);
+    setLoading(false);
+    onRefresh();
+  }
+
+  async function handleAddMulti() {
+    setLoading(true);
+    const addRes = await fetch(`${API}/add-task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, force: false }),
+    });
+    const addData = await addRes.json();
+
+    if (addData.status !== "created") {
+      setError("Failed to create tasks.");
+      setLoading(false);
+      return;
+    }
+
+    setResult(
+      `Added ${addData.count} linked tasks — check the task pool to schedule them.`,
+    );
     setStep(STEPS.DONE);
     setLoading(false);
     onRefresh();
@@ -358,6 +388,58 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {step === STEPS.PREVIEW && parsedTasks && (
+            <div className="checkin-form">
+              <button
+                className="edit-link"
+                onClick={() => setStep(STEPS.INPUT)}
+                disabled={loading}
+              >
+                ← edit input
+              </button>
+
+              <p className="muted" style={{ fontSize: "13px" }}>
+                This looks like {parsedTasks.length} linked tasks:
+              </p>
+
+              <div className="task-preview-multi">
+                {parsedTasks.map((t, i) => (
+                  <div
+                    key={i}
+                    className="preview-row"
+                    style={{
+                      flexDirection: "column",
+                      alignItems: "flex-start",
+                      gap: "2px",
+                    }}
+                  >
+                    <span className="preview-value" style={{ fontWeight: 600 }}>
+                      {i + 1}. {t.title}
+                    </span>
+                    <span className="muted" style={{ fontSize: "12px" }}>
+                      {t.duration_estimated} · {t.energy_required} energy
+                      {t.blocked_by?.length > 0 &&
+                        ` · blocked by: ${t.blocked_by.join(", ")}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {error && (
+                <p style={{ color: "var(--red)", fontSize: "13px" }}>{error}</p>
+              )}
+
+              <button
+                className="btn-primary"
+                onClick={handleAddMulti}
+                disabled={loading}
+                style={{ width: "100%" }}
+              >
+                {loading ? "Adding..." : `Add all ${parsedTasks.length} tasks`}
+              </button>
             </div>
           )}
 
