@@ -161,6 +161,15 @@ class SplitTaskRequest(BaseModel):
     first_chunk_minutes: int
 
 
+class SetDeadlineRequest(BaseModel):
+    task_title: str
+    deadline: Optional[str] = None  # None/empty = remove deadline
+
+
+class UnplanRequest(BaseModel):
+    task_title: str
+
+
 # --- Endpoints ---
 
 
@@ -1170,6 +1179,44 @@ def split_task_endpoint(request: SplitTaskRequest):
         if result["status"] == "error":
             raise HTTPException(status_code=400, detail=result["message"])
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/set-deadline")
+def set_deadline_endpoint(request: SetDeadlineRequest):
+    """Change or remove a task's deadline."""
+    try:
+        from reschedule import find_task_file, update_task_file
+
+        filepath = find_task_file(request.task_title)
+        if not filepath:
+            raise HTTPException(
+                status_code=404, detail=f"Task not found: {request.task_title}"
+            )
+        update_task_file(filepath, {"deadline": request.deadline or None})
+        return {"status": "updated", "deadline": request.deadline or None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/unplan-task")
+def unplan_task_endpoint(request: UnplanRequest):
+    """Clear a task's planned_date without needing to pick a new day."""
+    try:
+        from reschedule import find_task_file, update_task_file
+
+        filepath = find_task_file(request.task_title)
+        if not filepath:
+            raise HTTPException(
+                status_code=404, detail=f"Task not found: {request.task_title}"
+            )
+        update_task_file(filepath, {"planned_date": None})
+        return {"status": "unplanned"}
     except HTTPException:
         raise
     except Exception as e:

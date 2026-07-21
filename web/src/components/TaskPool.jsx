@@ -506,6 +506,35 @@ export default function TaskPool({ onRefresh, viewedDate }) {
     refreshAll();
   }
 
+  async function handleChangeDeadline(task) {
+    const current = task.deadline || "";
+    const input = prompt(
+      `Change deadline for "${task.title}" (YYYY-MM-DD or YYYY-MM-DDTHH:MM, leave blank to remove):`,
+      current,
+    );
+    if (input === null) return; // cancelled
+    await fetch(`${API}/set-deadline`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_title: task.title,
+        deadline: input.trim() || null,
+      }),
+    });
+    setTaskMenu(null);
+    refreshAll();
+  }
+
+  async function handleUnplan(task) {
+    await fetch(`${API}/unplan-task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_title: task.title }),
+    });
+    setTaskMenu(null);
+    refreshAll();
+  }
+
   function applyFilter(taskList) {
     switch (filter) {
       case "due_soon":
@@ -820,8 +849,32 @@ export default function TaskPool({ onRefresh, viewedDate }) {
                 <button onClick={() => handleTaskPlan(taskMenu.task)}>
                   📋 Plan for Day
                 </button>
+                {taskMenu.task.planned_date && (
+                  <button onClick={() => handleUnplan(taskMenu.task)}>
+                    🗑 Unplan
+                  </button>
+                )}
                 <button onClick={() => handleTaskSplit(taskMenu.task)}>
                   ✂️ Split Task
+                </button>
+                <button onClick={() => handleChangeDeadline(taskMenu.task)}>
+                  📆 Change Deadline
+                </button>
+                <div className="context-divider" />
+                <button
+                  onClick={async () => {
+                    setTaskMenu(null);
+                    await fetch(`${API}/complete-task`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        task_title: taskMenu.task.title,
+                      }),
+                    });
+                    refreshAll();
+                  }}
+                >
+                  ✓ Complete
                 </button>
                 {/* Only show Unschedule if task is already scheduled */}
                 {taskMenu.task.status === "scheduled" && (

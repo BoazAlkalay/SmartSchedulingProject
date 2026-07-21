@@ -539,12 +539,13 @@ def complete_task(
     if filepath:
         post = frontmatter.load(filepath)
 
-        # Delete calendar event if exists
+        # Truncate calendar event to now (preserves historical record),
+        # rather than deleting it outright — same approach as Stopping Now
         event_id = post.metadata.get("calendar_event_id")
         if event_id:
-            from calendar_writer import delete_calendar_event
+            from calendar_writer import truncate_calendar_event
 
-            delete_calendar_event(event_id)
+            truncate_calendar_event(event_id)
 
         # Update completion fields
         post.metadata["status"] = "done"
