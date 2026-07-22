@@ -412,28 +412,46 @@ def schedule_task(
             break
 
     # Create the calendar event
-    event_id = create_calendar_event(
-        title=task_title,
-        start_iso=slot["start_iso"],
-        end_iso=slot["end_iso"],
-        description="Scheduled by SmartScheduler",
-        energy=task_energy,
-    )
+    event_id = None
+    calendar_synced = True
+    try:
+        event_id = create_calendar_event(
+            title=task_title,
+            start_iso=slot["start_iso"],
+            end_iso=slot["end_iso"],
+            description="Scheduled by SmartScheduler",
+            energy=task_energy,
+        )
+    except Exception as e:
+        print(f"Warning: could not create calendar event for '{task_title}': {e}")
+        calendar_synced = False
 
-    # Update the task file
+    # Update the task file regardless — don't lose the scheduling intent
+    # just because Google Calendar was unreachable
     update_task_with_event(
         task_title, event_id, slot["start"], date_str, duration_minutes
     )
 
-    return {
-        "status": "scheduled",
-        "title": task_title,
-        "start": slot["start"],
-        "end": slot["end"],
-        "date": date_str,
-        "event_id": event_id,
-        "message": f"Scheduled '{task_title}' for {date_str} from {slot['start']} to {slot['end']}",
-    }
+    if calendar_synced:
+        return {
+            "status": "scheduled",
+            "title": task_title,
+            "start": slot["start"],
+            "end": slot["end"],
+            "date": date_str,
+            "event_id": event_id,
+            "message": f"Scheduled '{task_title}' for {date_str} from {slot['start']} to {slot['end']}",
+        }
+    else:
+        return {
+            "status": "scheduled_local_only",
+            "title": task_title,
+            "start": slot["start"],
+            "end": slot["end"],
+            "date": date_str,
+            "event_id": None,
+            "message": f"Scheduled '{task_title}' locally for {date_str} from {slot['start']} to {slot['end']}, but couldn't sync to Google Calendar right now — will need to be re-synced later.",
+        }
 
 
 def truncate_calendar_event(event_id: str) -> bool:

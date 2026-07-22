@@ -37,7 +37,8 @@ class WhatNowRequest(BaseModel):
 
 class AddTaskRequest(BaseModel):
     text: str
-    force: bool = False
+    force: Optional[bool] = False
+    apply_suggested_dates: Optional[bool] = True
 
 
 class CheckinRequest(BaseModel):
@@ -195,7 +196,9 @@ def get_what_now(request: WhatNowRequest):
 def add_task_endpoint(request: AddTaskRequest):
     """Add one or more new tasks from natural language."""
     try:
-        filepaths = add_task(request.text)
+        filepaths = add_task(
+            request.text, apply_suggested_dates=request.apply_suggested_dates
+        )
         if not filepaths:
             raise HTTPException(status_code=400, detail="Failed to parse task.")
         return {
@@ -1155,7 +1158,7 @@ def toggle_habit_endpoint(request: ToggleHabitRequest):
 
 @app.get("/check-stale-scheduled")
 def check_stale_scheduled():
-    """Find tasks marked scheduled with a scheduled_date in the past."""
+    """Find tasks marked scheduled with a scheduled_date in the past, or scheduled without a real calendar sync."""
     try:
         from config import TASKS, INBOX
         import frontmatter
@@ -1163,11 +1166,13 @@ def check_stale_scheduled():
 
         today_str = datetime.now().strftime("%Y-%m-%d")
         stale = []
+        unsynced = []
 
         for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
             post = frontmatter.load(filepath)
             if post.metadata.get("status") != "scheduled":
                 continue
+
             scheduled_date = str(post.metadata.get("scheduled_date", ""))
             if scheduled_date and scheduled_date < today_str:
                 stale.append(
@@ -1178,15 +1183,40 @@ def check_stale_scheduled():
                     }
                 )
 
-        if not stale:
-            message = "No stale scheduled tasks found."
-        else:
-            lines = [f"⚠️ {len(stale)} stale scheduled task(s):"]
+            if not post.metadata.get("calendar_event_id"):
+                unsynced.append(
+                    {
+                        "title": post.metadata.get("title", ""),
+                        "scheduled_date": scheduled_date,
+                        "scheduled_time": post.metadata.get("scheduled_time", ""),
+                        "file": filepath.name,
+                    }
+                )
+
+        lines = []
+        if stale:
+            lines.append(f"⚠️ {len(stale)} stale scheduled task(s):")
             for s in stale:
                 lines.append(f"  {s['title']} — scheduled_date: {s['scheduled_date']}")
-            message = "\n".join(lines)
+        if unsynced:
+            lines.append(
+                f"⚠️ {len(unsynced)} task(s) scheduled but not synced to Google Calendar:"
+            )
+            for u in unsynced:
+                lines.append(
+                    f"  {u['title']} — {u['scheduled_date']} {u['scheduled_time']}"
+                )
+        if not lines:
+            lines.append("No stale or unsynced scheduled tasks found.")
 
-        return {"status": "ok", "stale": stale, "message": message}
+        message = "\n".join(lines)
+
+        return {
+            "status": "ok",
+            "stale": stale,
+            "unsynced": unsynced,
+            "message": message,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

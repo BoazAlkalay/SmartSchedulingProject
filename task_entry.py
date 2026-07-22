@@ -65,7 +65,8 @@ def parse_task_from_text(raw_text: str) -> dict:
     prompt = f"""
 Today is {today} ({day_of_week}) and the current time is {current_time}.
 When the user says "today" the deadline is exactly {today}.
-When the user says "tomorrow" the deadline is exactly {(effective_now + timedelta(days=1)).strftime("%Y-%m-%d")}.When the user says "this week" the deadline is the coming Sunday.
+When the user says "tomorrow" the deadline is exactly {(effective_now + timedelta(days=1)).strftime("%Y-%m-%d")}.
+When the user says "this week" the deadline is the coming Sunday.
 When the user says "next Monday" the deadline is exactly {next_weekdays["monday"]}. When the user says "next Tuesday" the deadline is exactly {next_weekdays["tuesday"]}. When the user says "next Wednesday" the deadline is exactly {next_weekdays["wednesday"]}. When the user says "next Thursday" the deadline is exactly {next_weekdays["thursday"]}. When the user says "next Friday" the deadline is exactly {next_weekdays["friday"]}. When the user says "next Saturday" the deadline is exactly {next_weekdays["saturday"]}. When the user says "next Sunday" the deadline is exactly {next_weekdays["sunday"]}.
 If the user mentions a specific time (e.g. "at 3pm", "tonight at 8", "tomorrow morning at 9"), extract it as parsed_datetime in ISO format combining the resolved date and time.
 If the user says a time like "at 6" or "at 9" with no AM/PM specified:
@@ -117,7 +118,9 @@ Input: {raw_text}
     return tasks[0] if len(tasks) == 1 else tasks
 
 
-def create_task_file(task_data: dict, destination: Path = None) -> Path:
+def create_task_file(
+    task_data: dict, destination: Path = None, apply_suggested_dates: bool = True
+) -> Path:
     """
     Takes a parsed task dictionary and writes it as a markdown file
     in the appropriate vault folder
@@ -174,6 +177,11 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
         except (ValueError, TypeError):
             pass
 
+    planned_date = task_data.get("planned_date")
+    suggested_date = task_data.get("suggested_schedule_date")
+    if apply_suggested_dates and not planned_date and suggested_date:
+        planned_date = suggested_date
+
     # build the frontmatter
     metadata = {
         "id": f"task_{uuid.uuid4().hex[:8]}",
@@ -182,7 +190,7 @@ def create_task_file(task_data: dict, destination: Path = None) -> Path:
         "priority": task_data.get("priority", "medium"),
         "deadline": deadline,
         "suggested_schedule_date": task_data.get("suggested_schedule_date"),
-        "planned_date": task_data.get("planned_date"),
+        "planned_date": planned_date,
         "recurrence": task_data.get("recurrence"),
         "status": "unscheduled",
         "progress": "0%",
@@ -262,7 +270,7 @@ def parse_llm_task_response(response: str) -> list:
     return tasks
 
 
-def add_task(raw_text: str) -> list:
+def add_task(raw_text: str, apply_suggested_dates: bool = True) -> list:
     """
     Main function — takes natural language and creates one or more
     linked task files (if the LLM decomposes the input into multiple
@@ -348,7 +356,9 @@ Input: {raw_text}
     root_id = None
 
     for i, task_data in enumerate(task_list):
-        filepath = create_task_file(task_data)
+        filepath = create_task_file(
+            task_data, apply_suggested_dates=apply_suggested_dates
+        )
         post = frontmatter.load(filepath)
 
         if i == 0:
