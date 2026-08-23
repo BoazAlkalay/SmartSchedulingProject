@@ -9,9 +9,10 @@ const STEPS = {
   DONE: "done",
 };
 
-export default function AddTaskModal({ onClose, onRefresh }) {
+export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
   const [step, setStep] = React.useState(STEPS.INPUT);
-  const [text, setText] = React.useState("");
+  const [text, setText] = React.useState(initialText);
+  const [initialTextValue] = React.useState(initialText);
   const [parsed, setParsed] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -182,6 +183,41 @@ export default function AddTaskModal({ onClose, onRefresh }) {
     return `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
   }
 
+  // Date-only strings ("YYYY-MM-DD") must be split and built with
+  // new Date(year, month-1, day) rather than new Date(string) — the
+  // latter parses as UTC midnight and can shift a day off in local time.
+  function formatDateOnly(dateStr) {
+    if (!dateStr) return null;
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString("default", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  // Date-time strings ("YYYY-MM-DDTHH:MM") parse fine with new Date()
+  // since they have no timezone suffix, so JS treats them as local time.
+  function formatDateTime(dtStr) {
+    if (!dtStr) return null;
+    const dt = new Date(dtStr);
+    return dt.toLocaleString("default", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
+  function formatDeadline(deadline) {
+    if (!deadline) return "none";
+    return deadline.includes("T")
+      ? formatDateTime(deadline)
+      : formatDateOnly(deadline);
+  }
+
   return (
     <>
       <div className="modal-overlay" onClick={onClose} />
@@ -218,7 +254,11 @@ export default function AddTaskModal({ onClose, onRefresh }) {
               <button
                 className="btn-primary"
                 onClick={handleParse}
-                disabled={loading || !text.trim()}
+                disabled={
+                  loading ||
+                  !text.trim() ||
+                  text.trim() === initialTextValue.trim()
+                }
                 style={{ width: "100%" }}
               >
                 {loading ? "Parsing..." : "Parse →"}
@@ -260,11 +300,45 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                   <span className="preview-value">{parsed.priority}</span>
                 </div>
                 <div className="preview-row">
-                  <span className="preview-label">Deadline</span>
+                  <span className="preview-label">Due by</span>
                   <span className="preview-value">
-                    {parsed.deadline || "none"}
+                    {formatDeadline(parsed.deadline)}
                   </span>
                 </div>
+                <div className="preview-row">
+                  <span className="preview-label">Planned for</span>
+                  <span className="preview-value">
+                    {parsed.planned_date
+                      ? formatDateOnly(parsed.planned_date)
+                      : parsed.suggested_schedule_date
+                        ? `${formatDateOnly(parsed.suggested_schedule_date)} (suggested)`
+                        : parsed.deadline
+                          ? `${formatDateOnly(parsed.deadline.split("T")[0])} (same as deadline)`
+                          : "not yet placed"}
+                  </span>
+                </div>
+                {parsed.suggested_start_time && (
+                  <div className="preview-row">
+                    <span className="preview-label">
+                      {parsed.suggested_start_feasible === false
+                        ? "Heads up"
+                        : "Suggested start"}
+                    </span>
+                    <span
+                      className="preview-value"
+                      style={{
+                        color:
+                          parsed.suggested_start_feasible === false
+                            ? "var(--amber)"
+                            : "var(--green)",
+                      }}
+                    >
+                      {parsed.suggested_start_feasible === false
+                        ? `Can't fit before the deadline — starting now would finish ~${parsed.minutes_late_if_now} min late`
+                        : formatDateTime(parsed.suggested_start_time)}
+                    </span>
+                  </div>
+                )}
                 <div className="preview-row">
                   <span className="preview-label">Folder</span>
                   <span className="preview-value">{parsed.folder}</span>
@@ -285,21 +359,12 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                 )}
                 {parsed.parsed_datetime && (
                   <div className="preview-row">
-                    <span className="preview-label">Suggested time</span>
+                    <span className="preview-label">Requested time</span>
                     <span
                       className="preview-value"
                       style={{ color: "var(--green)" }}
                     >
-                      {new Date(parsed.parsed_datetime).toLocaleString(
-                        "default",
-                        {
-                          weekday: "short",
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        },
-                      )}
+                      {formatDateTime(parsed.parsed_datetime)}
                     </span>
                   </div>
                 )}
@@ -362,8 +427,18 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                   <button
                     className="btn-ghost"
                     onClick={() => {
-                      if (parsed.parsed_datetime) {
-                        const dt = new Date(parsed.parsed_datetime);
+                      let dt = null;
+                      if (
+                        parsed.suggested_start_time &&
+                        parsed.suggested_start_feasible !== false
+                      ) {
+                        dt = new Date(parsed.suggested_start_time);
+                      } else if (parsed.suggested_start_feasible === false) {
+                        dt = new Date(); // can't fit — prefill "now" instead of an already-past time
+                      } else if (parsed.parsed_datetime) {
+                        dt = new Date(parsed.parsed_datetime);
+                      }
+                      if (dt) {
                         const hours = String(dt.getHours()).padStart(2, "0");
                         const minutes = String(dt.getMinutes()).padStart(
                           2,
@@ -375,9 +450,13 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                     }}
                     disabled={loading}
                   >
-                    {parsed.parsed_datetime
-                      ? "⚡ Schedule at Parsed Time"
-                      : "Add & Schedule At"}
+                    {parsed.suggested_start_feasible === false
+                      ? "⚡ Schedule ASAP"
+                      : parsed.suggested_start_time
+                        ? "⚡ Schedule at Suggested Time"
+                        : parsed.parsed_datetime
+                          ? "⚡ Schedule at Parsed Time"
+                          : "Add & Schedule At"}
                   </button>
                   <button
                     className="btn-primary"
@@ -424,6 +503,18 @@ export default function AddTaskModal({ onClose, onRefresh }) {
                       {t.blocked_by?.length > 0 &&
                         ` · blocked by: ${t.blocked_by.join(", ")}`}
                     </span>
+                    {(t.deadline ||
+                      t.planned_date ||
+                      t.suggested_schedule_date) && (
+                      <span className="muted" style={{ fontSize: "12px" }}>
+                        {t.deadline && `Due ${formatDeadline(t.deadline)}`}
+                        {t.deadline &&
+                          (t.planned_date || t.suggested_schedule_date) &&
+                          " · "}
+                        {(t.planned_date || t.suggested_schedule_date) &&
+                          `Planned ${formatDateOnly(t.planned_date || t.suggested_schedule_date)}`}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

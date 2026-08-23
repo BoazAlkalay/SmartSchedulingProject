@@ -144,7 +144,7 @@ function parseDurationToMinutes(duration) {
   return minutes || 60;
 }
 
-export default function TaskPool({ onRefresh, viewedDate }) {
+export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
   const [tasks, setTasks] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [taskMenu, setTaskMenu] = React.useState(null);
@@ -836,16 +836,32 @@ export default function TaskPool({ onRefresh, viewedDate }) {
                 <div className="context-divider" />
                 <button
                   onClick={async () => {
+                    const t = taskMenu.task.title;
                     setTaskMenu(null);
                     await fetch(`${API}/complete-task`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ task_title: taskMenu.task.title }),
+                      body: JSON.stringify({ task_title: t }),
                     });
                     refreshAll();
                   }}
                 >
                   ✓ Complete
+                </button>
+                <button
+                  onClick={async () => {
+                    const t = taskMenu.task.title;
+                    setTaskMenu(null);
+                    await fetch(`${API}/complete-task`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ task_title: t }),
+                    });
+                    refreshAll();
+                    onCompleteAddNext(`Follow-up to "${t}": `);
+                  }}
+                >
+                  ➕ Complete & Add
                 </button>
                 <div className="context-divider" />
                 <button
@@ -888,18 +904,32 @@ export default function TaskPool({ onRefresh, viewedDate }) {
                 <div className="context-divider" />
                 <button
                   onClick={async () => {
+                    const t = taskMenu.task.title;
                     setTaskMenu(null);
                     await fetch(`${API}/complete-task`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        task_title: taskMenu.task.title,
-                      }),
+                      body: JSON.stringify({ task_title: t }),
                     });
                     refreshAll();
                   }}
                 >
                   ✓ Complete
+                </button>
+                <button
+                  onClick={async () => {
+                    const t = taskMenu.task.title;
+                    setTaskMenu(null);
+                    await fetch(`${API}/complete-task`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ task_title: t }),
+                    });
+                    refreshAll();
+                    onCompleteAddNext(`Follow-up to "${t}": `);
+                  }}
+                >
+                  ➕ Complete & Add
                 </button>
                 {/* Only show Unschedule if task is already scheduled */}
                 {taskMenu.task.status === "scheduled" && (

@@ -27,6 +27,7 @@ function App() {
   const [showWhatNow, setShowWhatNow] = useState(false);
   const [showCheckIn, setShowCheckIn] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
+  const [addTaskPrefill, setAddTaskPrefill] = useState("");
   const [showAdmin, setShowAdmin] = useState(false);
   const [viewedDate, setViewedDate] = useState(null);
   const [newBracket, setNewBracket] = useState(null);
@@ -50,6 +51,11 @@ function App() {
 
   const handleContextMenu = useCallback((x, y, event) => {
     setContextMenu({ x, y, event });
+  }, []);
+
+  const handleCompleteAddNext = useCallback((prefillText) => {
+    setAddTaskPrefill(prefillText);
+    setShowAddTask(true);
   }, []);
 
   const handleDateClick = useCallback((dateStr) => {
@@ -334,6 +340,7 @@ function App() {
             key={taskPoolKey}
             onRefresh={handleRefresh}
             viewedDate={viewedDate}
+            onCompleteAddNext={handleCompleteAddNext}
           />
         </aside>
 
@@ -520,6 +527,7 @@ function App() {
           event={contextMenu.event}
           onClose={() => setContextMenu(null)}
           onRefresh={handleRefresh}
+          onCompleteAddNext={handleCompleteAddNext}
         />
       )}
 
@@ -531,8 +539,12 @@ function App() {
 
       {showAddTask && (
         <AddTaskModal
-          onClose={() => setShowAddTask(false)}
+          onClose={() => {
+            setShowAddTask(false);
+            setAddTaskPrefill("");
+          }}
           onRefresh={handleRefresh}
+          initialText={addTaskPrefill}
         />
       )}
 

@@ -4,7 +4,14 @@ const API = `http://${window.location.hostname}:8000`;
 
 const isMobile = window.innerWidth <= 1024;
 
-export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
+export default function ContextMenu({
+  x,
+  y,
+  event,
+  onClose,
+  onRefresh,
+  onCompleteAddNext,
+}) {
   const [view, setView] = React.useState("main");
   const [progress, setProgress] = React.useState("50%");
   const [continuationNote, setContinuationNote] = React.useState("");
@@ -12,6 +19,8 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
   const [extendMinutes, setExtendMinutes] = React.useState(15);
   const [submitting, setSubmitting] = React.useState(false);
   const [remaining, setRemaining] = React.useState("");
+  const [completionNote, setCompletionNote] = React.useState("");
+  const [addFollowUp, setAddFollowUp] = React.useState(false);
 
   const menuRef = React.useRef(null);
   const [menuStyle, setMenuStyle] = React.useState({});
@@ -47,6 +56,20 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
     });
     onClose();
     onRefresh();
+  }
+
+  async function handleCompletePlus() {
+    setSubmitting(true);
+    await fetch(`${API}/complete-task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_title: title, notes: completionNote }),
+    });
+    onClose();
+    onRefresh();
+    if (addFollowUp) {
+      onCompleteAddNext(`Follow-up to "${title}": `);
+    }
   }
 
   async function handleStoppingNow() {
@@ -130,6 +153,9 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
         {view === "main" && isTask && (
           <>
             <button onClick={handleComplete}>✓ Complete</button>
+            <button onClick={() => setView("completePlus")}>
+              ➕ Complete & Add
+            </button>
             <button onClick={() => setView("stopping")}>⏸ Stopping Now</button>
             <button onClick={() => setView("retry")}>↩ Retry Later</button>
             <button onClick={handleUnschedule}>📋 Unschedule</button>
@@ -145,6 +171,45 @@ export default function ContextMenu({ x, y, event, onClose, onRefresh }) {
 
         {view === "main" && !isTask && (
           <div className="context-note">Calendar event — view only</div>
+        )}
+
+        {/* Complete + form */}
+        {view === "completePlus" && (
+          <div className="context-form">
+            <div className="form-field">
+              <label>
+                Completion note <span className="optional">(optional)</span>
+              </label>
+              <textarea
+                rows={2}
+                placeholder="anything worth remembering?"
+                value={completionNote}
+                onChange={(e) => setCompletionNote(e.target.value)}
+              />
+            </div>
+            <div className="form-field checkbox-field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={addFollowUp}
+                  onChange={(e) => setAddFollowUp(e.target.checked)}
+                />
+                Add a follow-up task
+              </label>
+            </div>
+            <div className="context-form-buttons">
+              <button className="btn-ghost" onClick={() => setView("main")}>
+                ← Back
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleCompletePlus}
+                disabled={submitting}
+              >
+                {submitting ? "..." : "Complete"}
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Stopping Now form */}

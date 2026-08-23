@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from llm import ask
 from config import INBOX, TASKS, RUNTIME_MODEL
+from split_task import parse_duration_to_minutes
 
 
 def clean_json_response(text: str) -> str:
@@ -30,21 +31,16 @@ def title_exists(title: str) -> bool:
     return False
 
 
-def parse_task_from_text(raw_text: str) -> dict:
+def _build_date_context(now: datetime) -> dict:
     """
-    takes natural language input and returns a structured task dictionary.
+    Shared "what day/time is it, and what are the next 7 weekday dates"
+    computation used by every parsing prompt. Pulled out so both
+    parse_task_from_text() and add_task() always stay in sync.
     """
-
-    now = datetime.now()
-
     # If it's the early hours (before ~3am), treat it as still "last night" —
     # relative date words like "today"/"tomorrow"/"next Monday" should follow
     # the day the person feels like they're in, not the literal calendar date.
     effective_now = now - timedelta(hours=3) if now.hour < 3 else now
-
-    today = effective_now.strftime("%Y-%m-%d")
-    day_of_week = effective_now.strftime("%A").lower()
-    current_time = now.strftime("%H:%M")  # actual clock time, unshifted
 
     weekday_names = [
         "monday",
@@ -62,13 +58,41 @@ def parse_task_from_text(raw_text: str) -> dict:
             "%Y-%m-%d"
         )
 
-    prompt = f"""
+    return {
+        "effective_now": effective_now,
+        "today": effective_now.strftime("%Y-%m-%d"),
+        "day_of_week": effective_now.strftime("%A").lower(),
+        "current_time": now.strftime("%H:%M"),  # actual clock time, unshifted
+        "next_weekdays": next_weekdays,
+    }
+
+
+def _build_parse_prompt(raw_text: str, ctx: dict) -> str:
+    """
+    Shared prompt body for parsing natural language into one or more
+    structured tasks. Single source of truth — used by both the preview
+    endpoint (parse_task_from_text) and the actual creation endpoint
+    (add_task), so the two can no longer drift out of sync.
+    """
+    today = ctx["today"]
+    day_of_week = ctx["day_of_week"]
+    current_time = ctx["current_time"]
+    effective_now = ctx["effective_now"]
+    next_weekdays = ctx["next_weekdays"]
+
+    return f"""
 Today is {today} ({day_of_week}) and the current time is {current_time}.
 When the user says "today" the deadline is exactly {today}.
 When the user says "tomorrow" the deadline is exactly {(effective_now + timedelta(days=1)).strftime("%Y-%m-%d")}.
 When the user says "this week" the deadline is the coming Sunday.
 When the user says "next Monday" the deadline is exactly {next_weekdays["monday"]}. When the user says "next Tuesday" the deadline is exactly {next_weekdays["tuesday"]}. When the user says "next Wednesday" the deadline is exactly {next_weekdays["wednesday"]}. When the user says "next Thursday" the deadline is exactly {next_weekdays["thursday"]}. When the user says "next Friday" the deadline is exactly {next_weekdays["friday"]}. When the user says "next Saturday" the deadline is exactly {next_weekdays["saturday"]}. When the user says "next Sunday" the deadline is exactly {next_weekdays["sunday"]}.
-If the user mentions a specific time (e.g. "at 3pm", "tonight at 8", "tomorrow morning at 9"), extract it as parsed_datetime in ISO format combining the resolved date and time.
+
+If the user mentions a specific time they want to DO the task AT (e.g. "at 3pm", "tonight at 8", "tomorrow morning at 9"), extract it as parsed_datetime in ISO format combining the resolved date and time. This is a scheduling request, not a deadline.
+
+If the user mentions a specific time the task is due BY (e.g. "by 3pm", "before my 2pm meeting", "due at noon", "before 3:00pm"), include that time in the deadline field using YYYY-MM-DDTHH:MM (24-hour format), e.g. "2026-07-26T15:00". Do NOT put a "due by" time into parsed_datetime — that field is only for explicit "at X" requests. If no specific time is mentioned at all, use YYYY-MM-DD only for deadline.
+
+If the user mentions extra time needed before the deadline beyond the task itself — travel time, drive time, prep time, etc. — sum it into deadline_buffer_minutes as a single total number of minutes. If travel time is given "each direction" or "one way" and the task requires a round trip (drive there and back), DOUBLE it for the round trip total — e.g. "10-15 min to drive each direction" with a round trip implied means roughly 20-30 min total, so use ~25. If a range is given, use the higher end to be safe rather than the lower end. Only include time that's separate from duration_estimated itself. Leave null if nothing like this is mentioned.
+
 If the user says a time like "at 6" or "at 9" with no AM/PM specified:
 - If that time is more than 1 hour in the future today, assume today
 - If that time has already passed today, assume tomorrow
@@ -84,7 +108,8 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "title": "task title",
     "duration_estimated": "e.g. 45min or 2hr",
     "priority": "low, medium, high, or critical",
-    "deadline": "YYYY-MM-DD or null",
+    "deadline": "YYYY-MM-DD, or YYYY-MM-DDTHH:MM if a specific due-by time was mentioned, or null",
+    "deadline_buffer_minutes": "number of extra minutes needed before the deadline (travel, prep, etc.), or null",
     "planned_date": "YYYY-MM-DD or null",
     "suggested_schedule_date": "YYYY-MM-DD or null",
     "recurrence": "preserve exact frequency e.g. 'every week', 'twice a day', 'every 3 days', 'on mondays and wednesdays', or null",
@@ -92,8 +117,7 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "slot_level": 0-9,
     "preferred_days": ["monday", "wednesday"] or [],
     "preferred_time": "e.g. morning or null",
-    "suggested_schedule_date": "YYYY-MM-DD or null",
-    "parsed_datetime": "e.g. 2026-07-17T15:00:00 if a specific time was mentioned, or null",
+    "parsed_datetime": "e.g. 2026-07-17T15:00:00 if an explicit 'at X' scheduling request was mentioned, or null",
     "blocked_by": [],
     "tags": ["tag1", "tag2"],
     "folder": "which folder this belongs in e.g. tasks/work/deep-work",
@@ -103,10 +127,76 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
 
 If the input describes multiple related tasks or steps rather than one single task, return a JSON ARRAY of task objects instead of a single object — one object per task, each following the schema above. Use blocked_by with the exact title string of another task IN THIS SAME ARRAY that must be completed first, if applicable.
 
-No explanation, no markdown, just the JSON object.
+No explanation, no markdown, just the JSON object or array.
 
 Input: {raw_text}
 """
+
+
+def _compute_suggested_start(task_data: dict, now: datetime) -> None:
+    """
+    If the task has a deadline with a time component, back-calculate a
+    suggested start time (deadline time minus duration minus buffer),
+    computed here in Python rather than trusted from the LLM. Mutates
+    task_data in place with:
+      - suggested_start_time: "YYYY-MM-DDTHH:MM" or None
+      - suggested_start_feasible: True / False / None (None = no time-deadline to check)
+      - minutes_late_if_now: int or None — only set when infeasible; how
+        late you'd finish if you started right now instead
+    No-op (all fields None) if deadline has no time component.
+    """
+    deadline = task_data.get("deadline")
+    if not deadline or "T" not in str(deadline):
+        task_data["suggested_start_time"] = None
+        task_data["suggested_start_feasible"] = None
+        task_data["minutes_late_if_now"] = None
+        return
+
+    try:
+        deadline_dt = datetime.fromisoformat(deadline)
+    except (ValueError, TypeError):
+        task_data["suggested_start_time"] = None
+        task_data["suggested_start_feasible"] = None
+        task_data["minutes_late_if_now"] = None
+        return
+
+    duration_minutes = parse_duration_to_minutes(
+        task_data.get("duration_estimated", "")
+    )
+
+    buffer_minutes = task_data.get("deadline_buffer_minutes") or 0
+    try:
+        buffer_minutes = int(buffer_minutes)
+    except (ValueError, TypeError):
+        buffer_minutes = 0
+
+    total_minutes = duration_minutes + buffer_minutes
+    suggested_start_dt = deadline_dt - timedelta(minutes=total_minutes)
+
+    task_data["suggested_start_time"] = suggested_start_dt.strftime("%Y-%m-%dT%H:%M")
+
+    if suggested_start_dt < now:
+        # Can't fit as originally scoped — report how late starting right now would land
+        finish_if_now = now + timedelta(minutes=total_minutes)
+        minutes_late = int((finish_if_now - deadline_dt).total_seconds() // 60)
+        task_data["suggested_start_feasible"] = False
+        task_data["minutes_late_if_now"] = max(minutes_late, 0)
+    else:
+        task_data["suggested_start_feasible"] = True
+        task_data["minutes_late_if_now"] = None
+
+
+def parse_task_from_text(raw_text: str) -> dict:
+    """
+    Takes natural language input and returns a structured task dictionary
+    (or a list of dicts for multi-task input). Each returned task also
+    carries a Python-computed suggested_start_time / feasibility check
+    when its deadline includes a specific time.
+    """
+    now = datetime.now()
+    ctx = _build_date_context(now)
+    prompt = _build_parse_prompt(raw_text, ctx)
+
     response = ask(prompt)
     tasks = parse_llm_task_response(response)
 
@@ -114,6 +204,9 @@ Input: {raw_text}
         print(f"Failed to parse LLM response as JSON")
         print(f"Raw response: {response}")
         return None
+
+    for t in tasks:
+        _compute_suggested_start(t, now)
 
     return tasks[0] if len(tasks) == 1 else tasks
 
@@ -279,70 +372,9 @@ def add_task(raw_text: str, apply_suggested_dates: bool = True) -> list:
     print(f"Parsing: '{raw_text}'")
 
     now = datetime.now()
+    ctx = _build_date_context(now)
+    prompt = _build_parse_prompt(raw_text, ctx)
 
-    # If it's the early hours (before ~3am), treat it as still "last night" —
-    # relative date words like "today"/"tomorrow"/"next Monday" should follow
-    # the day the person feels like they're in, not the literal calendar date.
-    effective_now = now - timedelta(hours=3) if now.hour < 3 else now
-
-    today = effective_now.strftime("%Y-%m-%d")
-    day_of_week = effective_now.strftime("%A").lower()
-    current_time = now.strftime("%H:%M")  # actual clock time, unshifted
-
-    weekday_names = [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-        "sunday",
-    ]
-    next_weekdays = {}
-    for i, name in enumerate(weekday_names):
-        days_ahead = (i - effective_now.weekday()) % 7 or 7
-        next_weekdays[name] = (effective_now + timedelta(days=days_ahead)).strftime(
-            "%Y-%m-%d"
-        )
-
-    prompt = f"""
-Today is {today} ({day_of_week}) and the current time is {current_time}.
-When the user says "today" the deadline is exactly {today}.
-When the user says "tomorrow" the deadline is exactly {(effective_now + timedelta(days=1)).strftime("%Y-%m-%d")}.
-When the user says "this week" the deadline is the coming Sunday.
-When the user says "next Monday" the deadline is exactly {next_weekdays["monday"]}. When the user says "next Tuesday" the deadline is exactly {next_weekdays["tuesday"]}. When the user says "next Wednesday" the deadline is exactly {next_weekdays["wednesday"]}. When the user says "next Thursday" the deadline is exactly {next_weekdays["thursday"]}. When the user says "next Friday" the deadline is exactly {next_weekdays["friday"]}. When the user says "next Saturday" the deadline is exactly {next_weekdays["saturday"]}. When the user says "next Sunday" the deadline is exactly {next_weekdays["sunday"]}.
-If the user mentions a specific time the task is due by (e.g. "by 3pm", "before my 2pm meeting", "due at noon"), include that time in the deadline using YYYY-MM-DDTHH:MM (24-hour format), e.g. "2026-07-26T15:00". If no specific time is mentioned, use YYYY-MM-DD only.
-
-If the person implies working on or starting this task on a DIFFERENT day than its deadline (e.g. "prep the presentation Wednesday, it's due Friday"), set suggested_schedule_date to that earlier working day. Only set this when such a distinction is actually implied — leave it null if the deadline and the intended working day are the same, or if no scheduling day was mentioned at all.
-
-If the input specifies a total time range to complete across multiple chunks (e.g. "4-6 hours split into 25 and 45 minute chunks"), you MUST generate enough chunks so their combined duration_estimated sums to within that stated range — do not stop early just because a few tasks feel sufficient. If the input asks to spread tasks across a time period (e.g. "throughout the week"), assign DIFFERENT deadline and planned_date values across multiple distinct days within that period — do not put every task on the same day.
-
-Parse the following into a task. Return ONLY a JSON object with these exact fields:
-{{
-    "title": "task title",
-    "duration_estimated": "e.g. 45min or 2hr",
-    "priority": "low, medium, high, or critical",
-    "deadline": "YYYY-MM-DD, or YYYY-MM-DDTHH:MM if a specific time was mentioned, or null",
-    "recurrence": "e.g. every week or null",
-    "energy_required": "cantrip, low, medium, high, or deep",
-    "slot_level": 0-9,
-    "preferred_days": ["monday", "wednesday"] or [],
-    "preferred_time": "e.g. morning or null",
-    "planned_date": "YYYY-MM-DD or null",
-    "suggested_schedule_date": "YYYY-MM-DD or null",
-    "blocked_by": [],
-    "tags": ["tag1", "tag2"],
-    "folder": "which folder this belongs in e.g. tasks/work/deep-work",
-    "notes": "any extra context worth capturing",
-    "scheduling_instructions": "any specific scheduling constraints mentioned"
-}}
-
-If the input describes multiple related tasks or steps rather than one single task, return a JSON ARRAY of task objects instead of a single object — one object per task, each following the schema above. Use blocked_by with the exact title string of another task IN THIS SAME ARRAY that must be completed first, if applicable.
-
-No explanation, no markdown, just the JSON object or array.
-
-Input: {raw_text}
-"""
     response = ask(prompt)
     task_list = parse_llm_task_response(response)
 
