@@ -101,6 +101,8 @@ If the user says a time like "at 6" or "at 9" with no AM/PM specified:
 
 If the person implies working on or starting this task on a DIFFERENT day than its deadline (e.g. "prep the presentation Wednesday, it's due Friday"), set suggested_schedule_date to that earlier working day. Only set this when such a distinction is actually implied — leave it null if the deadline and the intended working day are the same, or if no scheduling day was mentioned at all.
 
+If the person explicitly asks to keep a record of each time a recurring task is completed (e.g. "log every time I do this", "keep a history of each one", "don't delete these after I finish them"), set preserve_completions to true. Otherwise leave it false — this only matters for recurring tasks, since non-recurring completions are judged individually anyway.
+
 If the input specifies a total time range to complete across multiple chunks (e.g. "4-6 hours split into 25 and 45 minute chunks"), you MUST generate enough chunks so their combined duration_estimated sums to within that stated range — do not stop early just because a few tasks feel sufficient. If the input asks to spread tasks across a time period (e.g. "throughout the week"), assign DIFFERENT deadline and planned_date values across multiple distinct days within that period — do not put every task on the same day.
 
 Parse the following into a task. Return ONLY a JSON object with these exact fields:
@@ -113,6 +115,7 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "planned_date": "YYYY-MM-DD or null",
     "suggested_schedule_date": "YYYY-MM-DD or null",
     "recurrence": "preserve exact frequency e.g. 'every week', 'twice a day', 'every 3 days', 'on mondays and wednesdays', or null",
+    "preserve_completions": "true only if the person explicitly asked to keep a record of each completion of a recurring task, otherwise false",
     "energy_required": "cantrip, low, medium, high, or deep",
     "slot_level": 0-9,
     "preferred_days": ["monday", "wednesday"] or [],
@@ -285,6 +288,7 @@ def create_task_file(
         "suggested_schedule_date": task_data.get("suggested_schedule_date"),
         "planned_date": planned_date,
         "recurrence": task_data.get("recurrence"),
+        "preserve_completions": task_data.get("preserve_completions", False),
         "status": "unscheduled",
         "progress": "0%",
         "remaining": task_data.get("duration_estimated", ""),

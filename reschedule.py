@@ -622,8 +622,30 @@ def complete_task(
         if recurrence:
             _spawn_next_recurrence(post, filepath)
 
-        # LLM decides keep or delete
-        kept = _llm_keep_or_delete(post, done_path)
+            # Recurring tasks skip the LLM keep/delete judgment entirely and are
+        # deleted from done/ by default — the meaningful historical data
+        # (actual vs estimated duration, energy, tags, completion date) is
+        # already captured structurally in completed_log.json via
+        # log_completed_task() below, so keeping a full markdown file for
+        # every single recurrence forever is redundant clutter, not a
+        # safeguard. Set preserve_completions: true on a specific task to
+        # opt it out and always keep its done/ copies instead (deterministic,
+        # no LLM call — an explicit override shouldn't be left to judgment).
+        # Non-recurring tasks are unaffected either way.
+        preserve = post.metadata.get("preserve_completions", False)
+        if preserve:
+            kept = True
+            print(
+                f"Kept done/ copy (preserve_completions set): {post.metadata.get('title', '')}"
+            )
+        elif recurrence:
+            done_path.unlink()
+            print(
+                f"Deleted done/ copy of recurring task: {post.metadata.get('title', '')}"
+            )
+            kept = False
+        else:
+            kept = _llm_keep_or_delete(post, done_path)
 
         # Preserve minimal pattern data regardless of keep/delete outcome
         log_completed_task(post, kept)
