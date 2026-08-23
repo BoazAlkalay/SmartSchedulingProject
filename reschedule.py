@@ -574,12 +574,19 @@ def complete_task(
         post = frontmatter.load(filepath)
 
         # Truncate calendar event to now (preserves historical record),
-        # rather than deleting it outright — same approach as Stopping Now
+        # rather than deleting it outright — same approach as Stopping Now.
+        # Doesn't block completion if this fails — just logged, so a
+        # calendar hiccup never prevents the task itself from being marked done.
         event_id = post.metadata.get("calendar_event_id")
         if event_id:
             from calendar_writer import truncate_calendar_event
 
-            truncate_calendar_event(event_id)
+            truncate_succeeded = truncate_calendar_event(event_id)
+            if not truncate_succeeded:
+                print(
+                    f"Warning: could not truncate/delete calendar event {event_id} "
+                    f"for completed task '{task_title}' — may need manual cleanup in Google Calendar."
+                )
 
         # Update completion fields
         post.metadata["status"] = "done"

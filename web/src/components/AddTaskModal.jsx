@@ -73,7 +73,10 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
       return;
     }
 
-    const exactTitle = addData.title || parsed.title;
+    // Use the actual title written to disk, not the preview's guess —
+    // /add-task re-parses independently from /parse-task, so the two
+    // can drift slightly (see: Add Task Re-Parse Architecture Gap)
+    const exactTitle = addData.titles?.[0] || parsed.title;
 
     if (scheduleMode === "find-slot") {
       const duration = parseDurationToMinutes(parsed.duration_estimated);

@@ -456,8 +456,12 @@ def schedule_task(
 
 def truncate_calendar_event(event_id: str) -> bool:
     """
-    Update a calendar event's end time to now, truncating it.
-    Used when stopping a task mid-way.
+    Update a calendar event's end time to now, truncating it — used when
+    stopping or completing a task mid-way, to preserve a historical record
+    of time actually spent. If the event's start time hasn't arrived yet
+    (task completed early / ahead of schedule), there's no elapsed time to
+    preserve, so the event is deleted outright instead of being truncated
+    into an invalid or zero-length block.
     """
     try:
         service = get_personal_service()
@@ -465,6 +469,18 @@ def truncate_calendar_event(event_id: str) -> bool:
 
         # Get the existing event
         event = service.events().get(calendarId="primary", eventId=event_id).execute()
+
+        start_raw = event.get("start", {}).get("dateTime")
+        if start_raw:
+            start_dt = datetime.fromisoformat(start_raw).replace(tzinfo=None)
+            if now <= start_dt:
+                service.events().delete(
+                    calendarId="primary", eventId=event_id
+                ).execute()
+                print(
+                    f"Deleted calendar event {event_id} (completed before its scheduled start)"
+                )
+                return True
 
         # Update end time to now
         event["end"] = {"dateTime": now.isoformat(), "timeZone": "America/New_York"}

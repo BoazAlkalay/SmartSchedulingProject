@@ -206,10 +206,16 @@ def add_task_endpoint(request: AddTaskRequest):
         )
         if not filepaths:
             raise HTTPException(status_code=400, detail="Failed to parse task.")
+
+        import frontmatter as fm
+
+        titles = [fm.load(fp).metadata.get("title", "") for fp in filepaths]
+
         return {
             "status": "created",
             "count": len(filepaths),
             "files": [str(fp) for fp in filepaths],
+            "titles": titles,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -657,19 +663,27 @@ def find_slot_endpoint(request: FindSlotRequest):
 
 
 @app.get("/whats-coming")
-def whats_coming(scope: str = "today_remaining"):
+def whats_coming(scope: str = "today_remaining", start: str = None, end: str = None):
     try:
         from calendar_reader import get_all_events, parse_event_time
-        from config import TASKS, INBOX
+        from config import TASKS, INBOX, VAULT_PATH
         import frontmatter
-        from datetime import datetime, timedelta
+        import json
+        from datetime import datetime, timedelta, timezone
 
         now = datetime.now()
         today_str = now.strftime("%Y-%m-%d")
         tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
 
         # --- Define time window ---
-        if scope == "full_today":
+        if start and end:
+            # Explicit range requested (e.g. the calendar grid's actual
+            # visible Week/Month range) — bypasses the named-scope logic
+            # below entirely, since a scope can't express arbitrary ranges.
+            window_start = datetime.fromisoformat(f"{start}T00:00:00")
+            window_end = datetime.fromisoformat(f"{end}T23:59:59")
+            days_ahead = max((window_end - now).days + 1, 1)
+        elif scope == "full_today":
             window_start = datetime.fromisoformat(f"{today_str}T00:00:00")
             window_end = datetime.fromisoformat(f"{today_str}T23:59:59")
             days_ahead = 1
@@ -686,8 +700,44 @@ def whats_coming(scope: str = "today_remaining"):
             window_end = datetime.fromisoformat(f"{today_str}T23:59:59")
             days_ahead = 1
 
-        # --- Fetch calendar events ---
-        raw_events = get_all_events(days_ahead=days_ahead)
+            # --- Fetch calendar events ---
+        # For an explicit range, or the "full_*" named scopes (used by the
+        # calendar grid), look back to the start of the window so events
+        # truncated earlier today (e.g. completed tasks) still show up
+        # instead of aging out of Google's own timeMin filter the instant
+        # they end.
+        calendar_time_min = None
+        calendar_time_max = None
+        if start and end:
+            calendar_time_min = window_start.astimezone(timezone.utc)
+            calendar_time_max = window_end.astimezone(timezone.utc)
+        elif scope in ("full_today", "full_two_days"):
+            calendar_time_min = window_start.astimezone(timezone.utc)
+
+        raw_events = get_all_events(
+            days_ahead=days_ahead,
+            time_min=calendar_time_min,
+            time_max=calendar_time_max,
+        )
+
+        # A completed task's calendar remnant (truncated on completion) is
+        # indistinguishable from a real appointment once the task itself
+        # moves to done/ — cross-reference the Completed Task Preservation
+        # Log by title + date so the frontend can style it differently.
+        completed_lookup = set()
+        completed_log_path = VAULT_PATH / "system" / "completed_log.json"
+        if completed_log_path.exists():
+            try:
+                with open(completed_log_path, "r", encoding="utf-8") as f:
+                    completed_entries = json.load(f)
+                for entry in completed_entries:
+                    c_title = str(entry.get("title", "")).strip().lower()
+                    c_date = str(entry.get("completed", "")).strip()
+                    if c_title and c_date:
+                        completed_lookup.add((c_title, c_date))
+            except (json.JSONDecodeError, OSError):
+                pass
+
         items = []
 
         for e in raw_events:
@@ -700,6 +750,11 @@ def whats_coming(scope: str = "today_remaining"):
                 continue
             if start_dt < window_start or start_dt > window_end:
                 continue
+            is_completed = (
+                e["title"].strip().lower(),
+                start_dt.strftime("%Y-%m-%d"),
+            ) in completed_lookup
+
             items.append(
                 {
                     "type": "calendar",
@@ -712,6 +767,7 @@ def whats_coming(scope: str = "today_remaining"):
                     "status": None,
                     "energy": None,
                     "overdue": False,
+                    "completed": is_completed,
                 }
             )
 
@@ -795,9 +851,16 @@ def whats_coming(scope: str = "today_remaining"):
         # --- Fetch planned tasks ---
         planned_items = []
 
-        relevant_dates = (
-            [today_str, tomorrow_str] if scope == "two_days" else [today_str]
-        )
+        # Every date the requested window actually spans, derived from
+        # window_start/window_end directly rather than a hardcoded scope
+        # check — so this stays correct for any scope, and for an explicit
+        # Week/Month range too.
+        relevant_dates = set()
+        d = window_start.date()
+        end_date = window_end.date()
+        while d <= end_date:
+            relevant_dates.add(d.strftime("%Y-%m-%d"))
+            d += timedelta(days=1)
 
         for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
             post = frontmatter.load(filepath)

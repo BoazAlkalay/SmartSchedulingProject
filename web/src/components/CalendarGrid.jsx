@@ -118,8 +118,19 @@ function bracketProposalsToFCEvents(proposals) {
   }));
 }
 
-async function fetchEvents() {
-  const res = await fetch(`${API}/whats-coming?scope=full_two_days`);
+async function fetchEvents(dateRange) {
+  let url = `${API}/whats-coming?scope=full_two_days`;
+  if (dateRange) {
+    // Use the calendar's actual visible range (same source fetchBrackets
+    // already uses) so Week/Month views see real data across every day
+    // shown, not just today/tomorrow.
+    const start = new Date(dateRange.start);
+    const end = new Date(dateRange.end);
+    const toDateStr = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    url = `${API}/whats-coming?start=${toDateStr(start)}&end=${toDateStr(end)}`;
+  }
+  const res = await fetch(url);
   const data = await res.json();
   const items = data.items || [];
 
@@ -140,16 +151,22 @@ async function fetchEvents() {
 
 function itemToFCEvent(item) {
   if (item.type === "calendar") {
+    const isCompleted = !!item.completed;
     return {
       id: item.title + item.start,
-      title: item.title,
+      title: isCompleted ? `✓ ${item.title}` : item.title,
       start: item.date + "T" + to24hr(item.start),
       end: item.date + "T" + to24hr(item.end),
-      backgroundColor: "#3D6B4F",
-      borderColor: "#3D6B4F",
-      textColor: "white",
+      backgroundColor: isCompleted ? "#6B7A6F" : "#3D6B4F",
+      borderColor: isCompleted ? "#6B7A6F" : "#3D6B4F",
+      textColor: isCompleted ? "#E8E8E0" : "white",
+      classNames: isCompleted ? ["completed-event"] : [],
       editable: false,
-      extendedProps: { type: "calendar", calendar: item.calendar },
+      extendedProps: {
+        type: "calendar",
+        calendar: item.calendar,
+        completed: isCompleted,
+      },
     };
   } else {
     let endTime = null;
@@ -496,7 +513,7 @@ const CalendarGrid = forwardRef(function CalendarGrid(
             successCallback([...eventsCache, ...bracketsCache]);
           }
           const [fresh, brackets] = await Promise.all([
-            fetchEvents(),
+            fetchEvents(fetchInfo),
             fetchBrackets(fetchInfo),
           ]);
           bracketsCache = brackets;
