@@ -714,6 +714,7 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
     """
     from datetime import timedelta
     import re
+    import uuid
 
     recurrence = post.metadata.get("recurrence", "")
     if not recurrence:
@@ -806,6 +807,12 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
 
     # Build new task metadata
     new_metadata = dict(post.metadata)
+    # Every spawned instance is a distinct task and needs its own id — the
+    # Stable Task ID System (find_task_by_id, task splitting) assumes ids
+    # are unique, but this previously carried the parent's id forward
+    # unchanged on every recurrence, so all instances of a recurring task
+    # shared one id forever.
+    new_metadata["id"] = f"task_{uuid.uuid4().hex[:8]}"
     new_metadata["status"] = "unscheduled"
     new_metadata["progress"] = "0%"
     new_metadata["remaining"] = new_metadata.get("duration_estimated", "")

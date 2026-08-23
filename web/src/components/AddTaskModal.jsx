@@ -51,7 +51,7 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
     setLoading(false);
   }
 
-  async function handleAdd(scheduleMode) {
+  async function handleAdd(scheduleMode, force = false) {
     setLoading(true);
 
     // Send the already-parsed preview data straight through instead of
@@ -62,7 +62,7 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
     const addRes = await fetch(`${API}/add-task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parsed_tasks: [parsed], force: false }),
+      body: JSON.stringify({ parsed_tasks: [parsed], force }),
     });
     const addData = await addRes.json();
 
@@ -556,7 +556,7 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
                 </button>
                 <button
                   className="btn-danger"
-                  onClick={() => handleForceAdd("backlog")}
+                  onClick={() => handleAdd("backlog", true)}
                   disabled={loading}
                 >
                   Create Anyway

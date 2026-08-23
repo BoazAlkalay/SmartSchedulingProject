@@ -211,7 +211,20 @@ def add_task_endpoint(request: AddTaskRequest):
     - text given (no parsed_tasks): parse raw text from scratch, as before.
     """
     try:
-        from task_entry import create_tasks_from_parsed
+        from task_entry import create_tasks_from_parsed, title_exists
+
+        # Duplicate protection only applies to the single-task path from
+        # AddTaskModal's handleAdd — that's the only caller with a UI to
+        # resolve a duplicate (the DUPLICATE step + "Create Anyway" button).
+        # Multi-task decomposition and the raw-text path (iPhone Shortcuts)
+        # have no such UI, so they stay non-blocking as before rather than
+        # silently stranding the person with no way to proceed.
+        if request.parsed_tasks and len(request.parsed_tasks) == 1 and not request.force:
+            candidate_title = (
+                request.parsed_tasks[0].get("title", "").replace("_", " ").strip()
+            )
+            if candidate_title and title_exists(candidate_title):
+                return {"status": "duplicate", "title": candidate_title}
 
         if request.parsed_tasks:
             filepaths = create_tasks_from_parsed(
