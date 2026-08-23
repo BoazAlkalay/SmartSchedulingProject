@@ -16,7 +16,7 @@ export default function GenerateScheduleModal({
   currentEnergy,
   viewedDate,
 }) {
-  const [scope, setScope] = React.useState("today");
+  const [scope, setScope] = React.useState("rest_of_week");
   const [energy, setEnergy] = React.useState(currentEnergy || 3);
   const [context, setContext] = React.useState("");
   const [loading, setLoading] = React.useState(false);
@@ -102,6 +102,12 @@ export default function GenerateScheduleModal({
                   onClick={() => setScope("next_7_days")}
                 >
                   7 Days
+                </button>
+                <button
+                  className={scope === "next_14_days" ? "active" : ""}
+                  onClick={() => setScope("next_14_days")}
+                >
+                  14 Days
                 </button>
               </div>
             </div>

@@ -155,7 +155,7 @@ def generate_schedule(
     """
     Generate a proposed schedule using the LLM.
 
-    scope: "today", "rest_of_week", "next_7_days"
+    scope: "today", "rest_of_week", "next_7_days", "next_14_days"
     energy: 1-5 pip level
     context: optional free text from user
     target_date: override date (defaults to today)
@@ -174,9 +174,10 @@ def generate_schedule(
             current += timedelta(days=1)
         dates.append(current.strftime("%Y-%m-%d"))  # include Sunday
         dates = [d for d in dates if d >= today_str]
+    elif scope == "next_14_days":
+        dates = [(now + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(14)]
     else:  # next_7_days
         dates = [(now + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
-
     # Determine scope_days for task filtering
     scope_days = len(dates) + 1
 
@@ -304,7 +305,7 @@ Return ONLY the JSON array, no other text."""
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[{"role": "user", "content": prompt}],
     )
 
