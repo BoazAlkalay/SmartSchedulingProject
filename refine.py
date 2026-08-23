@@ -305,7 +305,33 @@ Return ONLY the markdown document, no preamble."""
     with open(roadmap_path, "w", encoding="utf-8") as f:
         f.write(roadmap)
 
-    return f"Roadmap updated. Previous version archived to roadmap_history/. Open system/roadmap.md in Obsidian to review."
+    # Archive and clear ideas.md now that it's been folded into the roadmap.
+    # Without this, every future run re-reads the full lifetime history of
+    # ideas.md (nothing here self-limits the way completed roadmap items do
+    # by collapsing into terse [x] lines) — that unbounded re-submission is
+    # what actually drives this function toward the token ceiling over time,
+    # more so than the roadmap re-generation itself. Only done after the
+    # roadmap write succeeds, so a failed API call leaves ideas.md untouched
+    # for a clean retry rather than losing anything.
+    ideas_history_dir = VAULT_PATH / "system/ideas_history"
+    ideas_history_dir.mkdir(exist_ok=True)
+    ideas_archive_path = (
+        ideas_history_dir / f"ideas_{datetime.now().strftime('%Y-%m-%d')}.md"
+    )
+    with open(ideas_archive_path, "w", encoding="utf-8") as f:
+        f.write(ideas)
+
+    with open(ideas_path, "w", encoding="utf-8") as f:
+        f.write("")
+
+    print(f"Archived ideas.md to {ideas_archive_path.name} and cleared it")
+
+    return (
+        "Roadmap updated. Previous version archived to roadmap_history/. "
+        "ideas.md archived to ideas_history/ and cleared — future runs only "
+        "see ideas logged since this consolidation. Open system/roadmap.md "
+        "in Obsidian to review."
+    )
 
 
 if __name__ == "__main__":
