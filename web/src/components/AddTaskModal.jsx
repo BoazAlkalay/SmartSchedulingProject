@@ -54,10 +54,15 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
   async function handleAdd(scheduleMode) {
     setLoading(true);
 
+    // Send the already-parsed preview data straight through instead of
+    // re-sending raw text — /add-task no longer re-parses in this case,
+    // so the created file is guaranteed to match exactly what the preview
+    // showed (title included), closing the Add Task Re-Parse
+    // Architecture Gap for the single-task path.
     const addRes = await fetch(`${API}/add-task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, force: false }),
+      body: JSON.stringify({ parsed_tasks: [parsed], force: false }),
     });
     const addData = await addRes.json();
 
@@ -73,9 +78,8 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
       return;
     }
 
-    // Use the actual title written to disk, not the preview's guess —
-    // /add-task re-parses independently from /parse-task, so the two
-    // can drift slightly (see: Add Task Re-Parse Architecture Gap)
+    // No longer a guess — this is the exact title just written to disk,
+    // since we sent the parsed data directly rather than re-parsing.
     const exactTitle = addData.titles?.[0] || parsed.title;
 
     if (scheduleMode === "find-slot") {
@@ -153,7 +157,7 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
     const addRes = await fetch(`${API}/add-task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, force: false }),
+      body: JSON.stringify({ parsed_tasks: parsedTasks, force: false }),
     });
     const addData = await addRes.json();
 

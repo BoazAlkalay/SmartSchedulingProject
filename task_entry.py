@@ -367,23 +367,24 @@ def parse_llm_task_response(response: str) -> list:
     return tasks
 
 
-def add_task(raw_text: str, apply_suggested_dates: bool = True) -> list:
+def create_tasks_from_parsed(
+    task_list: list, apply_suggested_dates: bool = True
+) -> list:
     """
-    Main function — takes natural language and creates one or more
-    linked task files (if the LLM decomposes the input into multiple
-    related tasks). Returns a list of created filepaths.
+    Takes an already-parsed list of task dicts — e.g. straight from
+    parse_task_from_text(), possibly after the person edited a field in
+    the preview — and creates the actual task files: blocked_by
+    resolution, root_id lineage, bidirectional wikilinks, console logging.
+
+    This is the shared file-creation logic used by both add_task() (which
+    parses raw text itself, below) and /add-task's parsed_tasks path
+    (which skips parsing entirely, reusing whatever the preview already
+    computed). Splitting this out closes the Add Task Re-Parse
+    Architecture Gap: confirming a previewed task no longer re-parses the
+    raw text a second time through an independent LLM call that could
+    drift from what the preview showed.
     """
-    print(f"Parsing: '{raw_text}'")
-
-    now = datetime.now()
-    ctx = _build_date_context(now)
-    prompt = _build_parse_prompt(raw_text, ctx)
-
-    response = ask(prompt)
-    task_list = parse_llm_task_response(response)
-
     if not task_list:
-        print("Failed to parse task(s). Please try again.")
         return []
 
     # First pass: create every file, track title -> id / filepath
@@ -472,6 +473,34 @@ def add_task(raw_text: str, apply_suggested_dates: bool = True) -> list:
                 f.write(frontmatter.dumps(post))
 
     return list(title_to_filepath.values())
+
+
+def add_task(raw_text: str, apply_suggested_dates: bool = True) -> list:
+    """
+    Main function — takes natural language and creates one or more linked
+    task files. Parses raw_text itself via its own LLM call.
+
+    If you already have parsed data (e.g. from a prior parse_task_from_text()
+    call, as the Add Task preview does), call create_tasks_from_parsed()
+    directly instead — that skips this redundant, potentially-drifting
+    second parse entirely.
+    """
+    print(f"Parsing: '{raw_text}'")
+
+    now = datetime.now()
+    ctx = _build_date_context(now)
+    prompt = _build_parse_prompt(raw_text, ctx)
+
+    response = ask(prompt)
+    task_list = parse_llm_task_response(response)
+
+    if not task_list:
+        print("Failed to parse task(s). Please try again.")
+        return []
+
+    return create_tasks_from_parsed(
+        task_list, apply_suggested_dates=apply_suggested_dates
+    )
 
 
 if __name__ == "__main__":

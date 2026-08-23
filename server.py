@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import uvicorn
 
 from what_now import what_now
@@ -36,9 +36,14 @@ class WhatNowRequest(BaseModel):
 
 
 class AddTaskRequest(BaseModel):
-    text: str
+    text: Optional[str] = None
     force: Optional[bool] = False
     apply_suggested_dates: Optional[bool] = True
+    # Already-parsed task data (e.g. straight from a prior /parse-task
+    # preview call, possibly edited). When provided, /add-task skips
+    # parsing entirely instead of re-parsing raw text through a second,
+    # independent LLM call. A single task can be sent as a one-item list.
+    parsed_tasks: Optional[List[dict]] = None
 
 
 class CheckinRequest(BaseModel):
@@ -199,11 +204,29 @@ def get_what_now(request: WhatNowRequest):
 
 @app.post("/add-task")
 def add_task_endpoint(request: AddTaskRequest):
-    """Add one or more new tasks from natural language."""
+    """
+    Add one or more new tasks. Two modes:
+    - parsed_tasks given: skip parsing entirely, create files directly
+      from data the /parse-task preview already computed.
+    - text given (no parsed_tasks): parse raw text from scratch, as before.
+    """
     try:
-        filepaths = add_task(
-            request.text, apply_suggested_dates=request.apply_suggested_dates
-        )
+        from task_entry import create_tasks_from_parsed
+
+        if request.parsed_tasks:
+            filepaths = create_tasks_from_parsed(
+                request.parsed_tasks,
+                apply_suggested_dates=request.apply_suggested_dates,
+            )
+        elif request.text:
+            filepaths = add_task(
+                request.text, apply_suggested_dates=request.apply_suggested_dates
+            )
+        else:
+            raise HTTPException(
+                status_code=400, detail="Must provide either text or parsed_tasks."
+            )
+
         if not filepaths:
             raise HTTPException(status_code=400, detail="Failed to parse task.")
 
@@ -217,6 +240,8 @@ def add_task_endpoint(request: AddTaskRequest):
             "files": [str(fp) for fp in filepaths],
             "titles": titles,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
