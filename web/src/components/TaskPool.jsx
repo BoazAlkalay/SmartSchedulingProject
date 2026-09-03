@@ -24,10 +24,11 @@ function EnergyLegend() {
   );
 }
 
-function deadlineUrgency(deadline) {
+function deadlineUrgency(deadline, plannedDate, status) {
   if (!deadline || deadline === "None") return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
   // Split off an optional time component (YYYY-MM-DDTHH:MM) before parsing the date
   const [datePart, timePart] = deadline.split("T");
@@ -46,7 +47,21 @@ function deadlineUrgency(deadline) {
     return ` by ${hour12}:${String(m).padStart(2, "0")} ${period}`;
   };
 
-  if (days < 0) return { label: "Overdue", color: "#8B2E2E", days };
+  if (days < 0) {
+    // A lapsed deadline isn't a false alarm if there's an active plan for
+    // it right now — in progress, or planned for today or later. Only a
+    // task with no current plan at all (still just sitting unscheduled) is
+    // genuinely forgotten and worth flagging. Keep `days` either way so
+    // sorting still bubbles it to the top of its section — just don't
+    // show the alarming label for the has-a-plan case.
+    const hasCurrentPlan =
+      status === "in-progress" ||
+      (plannedDate && plannedDate !== "None" && plannedDate >= todayStr);
+    if (hasCurrentPlan) {
+      return { label: null, color: "#8B2E2E", days };
+    }
+    return { label: "Overdue", color: "#8B2E2E", days };
+  }
   if (days === 0)
     return { label: `Due today${formatTime()}`, color: "#C4832A", days };
   if (days === 1)
@@ -59,7 +74,7 @@ function deadlineUrgency(deadline) {
 }
 
 function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {
-  const urgency = deadlineUrgency(task.deadline);
+  const urgency = deadlineUrgency(task.deadline, task.planned_date, task.status);
   const isInProgress = task.status === "in-progress";
 
   return (
@@ -89,7 +104,7 @@ function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {
         {isInProgress && task.progress && (
           <span className="task-progress-badge">{task.progress}</span>
         )}
-        {urgency && (
+        {urgency?.label && (
           <span
             className="task-deadline-badge"
             style={{ color: urgency.color }}
@@ -118,8 +133,8 @@ const ENERGY_ORDER = { deep: 0, high: 1, medium: 2, low: 3, cantrip: 4 };
 
 function sortByUrgency(tasks) {
   return [...tasks].sort((a, b) => {
-    const ua = deadlineUrgency(a.deadline);
-    const ub = deadlineUrgency(b.deadline);
+    const ua = deadlineUrgency(a.deadline, a.planned_date, a.status);
+    const ub = deadlineUrgency(b.deadline, b.planned_date, b.status);
     if (!ua && !ub) {
       // No deadline — sort by energy
       return (ENERGY_ORDER[a.energy] ?? 5) - (ENERGY_ORDER[b.energy] ?? 5);
