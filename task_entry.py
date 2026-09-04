@@ -295,6 +295,15 @@ def create_task_file(
         "progress": "0%",
         "remaining": task_data.get("duration_estimated", ""),
         "scheduled_time": None,
+        # Informational only — the computed back-calculated start time from
+        # a time-based deadline. Never auto-applied to scheduled_time/status
+        # here, since that would silently commit a calendar-worthy decision
+        # with no confirmation step (the interactive "Schedule at Suggested
+        # Time" button is the deliberate accept step for that). This just
+        # keeps the value from vanishing, especially for paths with no UI
+        # to confirm through at all (iPhone Shortcuts dictation).
+        "suggested_start_time": task_data.get("suggested_start_time"),
+        "suggested_start_feasible": task_data.get("suggested_start_feasible"),
         "retry_at": None,
         "retry_note": None,
         "continuation_note": None,
@@ -499,6 +508,9 @@ def add_task(raw_text: str, apply_suggested_dates: bool = True) -> list:
     if not task_list:
         print("Failed to parse task(s). Please try again.")
         return []
+
+    for t in task_list:
+        _compute_suggested_start(t, now)
 
     return create_tasks_from_parsed(
         task_list, apply_suggested_dates=apply_suggested_dates
