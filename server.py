@@ -97,6 +97,7 @@ class FindSlotRequest(BaseModel):
 class CompleteTaskRequest(BaseModel):
     task_title: str
     actual_duration: Optional[str] = ""
+    actual_completion_time: Optional[str] = None
     energy: Optional[str] = "unknown"
     notes: Optional[str] = ""
 
@@ -219,7 +220,11 @@ def add_task_endpoint(request: AddTaskRequest):
         # Multi-task decomposition and the raw-text path (iPhone Shortcuts)
         # have no such UI, so they stay non-blocking as before rather than
         # silently stranding the person with no way to proceed.
-        if request.parsed_tasks and len(request.parsed_tasks) == 1 and not request.force:
+        if (
+            request.parsed_tasks
+            and len(request.parsed_tasks) == 1
+            and not request.force
+        ):
             candidate_title = (
                 request.parsed_tasks[0].get("title", "").replace("_", " ").strip()
             )
@@ -584,6 +589,7 @@ def complete_task_endpoint(request: CompleteTaskRequest):
         message = complete_task(
             task_title=request.task_title,
             actual_duration=request.actual_duration,
+            actual_completion_time=request.actual_completion_time,
             energy=request.energy,
             notes=request.notes,
         )

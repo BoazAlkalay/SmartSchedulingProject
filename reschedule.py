@@ -562,26 +562,53 @@ def extend_task(
 
 
 def complete_task(
-    task_title: str, actual_duration: str = "", energy: str = "unknown", notes: str = ""
+    task_title: str,
+    actual_duration: str = "",
+    energy: str = "unknown",
+    notes: str = "",
+    actual_completion_time: str = None,
 ) -> str:
     """
     Mark a task as complete, delete calendar event, log checkin.
     Moves to done/ folder, LLM decides keep/delete, spawns next instance if recurring.
+
+    actual_completion_time: optional explicit ISO datetime (e.g. from the
+    "Completed At/In" action) for exactly when the task actually finished.
+    Takes priority over actual_duration for calendar adjustment when both
+    are somehow present. actual_duration continues to also feed the
+    existing duration_actual metadata / checkin note regardless.
     """
     filepath = find_task_file(task_title)
 
     if filepath:
         post = frontmatter.load(filepath)
 
-        # Truncate calendar event to now (preserves historical record),
-        # rather than deleting it outright — same approach as Stopping Now.
-        # Doesn't block completion if this fails — just logged, so a
-        # calendar hiccup never prevents the task itself from being marked done.
+        # Adjust calendar event to reflect actual completion (preserves a
+        # historical record), rather than deleting it outright — same
+        # approach as Stopping Now. Doesn't block completion if this fails
+        # — just logged, so a calendar hiccup never prevents the task
+        # itself from being marked done.
         event_id = post.metadata.get("calendar_event_id")
         if event_id:
             from calendar_writer import truncate_calendar_event
 
-            truncate_succeeded = truncate_calendar_event(event_id)
+            actual_end_dt = None
+            actual_duration_minutes = None
+            if actual_completion_time:
+                try:
+                    actual_end_dt = datetime.fromisoformat(actual_completion_time)
+                except (ValueError, TypeError):
+                    actual_end_dt = None
+            elif actual_duration:
+                from split_task import parse_duration_to_minutes
+
+                actual_duration_minutes = parse_duration_to_minutes(actual_duration)
+
+            truncate_succeeded = truncate_calendar_event(
+                event_id,
+                actual_end=actual_end_dt,
+                actual_duration_minutes=actual_duration_minutes,
+            )
             if not truncate_succeeded:
                 print(
                     f"Warning: could not truncate/delete calendar event {event_id} "

@@ -454,45 +454,90 @@ def schedule_task(
         }
 
 
-def truncate_calendar_event(event_id: str) -> bool:
+def truncate_calendar_event(
+    event_id: str,
+    actual_end: datetime = None,
+    actual_duration_minutes: int = None,
+) -> bool:
     """
-    Update a calendar event's end time to now, truncating it — used when
-    stopping or completing a task mid-way, to preserve a historical record
-    of time actually spent. If the event's start time hasn't arrived yet
-    (task completed early / ahead of schedule), there's no elapsed time to
-    preserve, so the event is deleted outright instead of being truncated
-    into an invalid or zero-length block.
+    Adjust a calendar event's end time to reflect when a task actually
+    finished, rather than either leaving a stale block or naively
+    stretching it to whenever "now" happens to be at completion time.
+
+    actual_end: an explicit completion datetime (naive, local time) —
+    used as-is when given. Highest priority — this is a fact, not a guess.
+    actual_duration_minutes: how long the task actually took, measured
+    from the event's real scheduled start (fetched fresh from Google here,
+    not assumed from the task file) — used to compute the end time when
+    actual_end isn't given.
+
+    If neither is given (plain Complete, no time/duration specified):
+    truncates to now if that's within a 30-minute grace window past the
+    event's original scheduled end (covers minor, unremarkable overruns
+    without requiring extra input every time); beyond that grace window,
+    leaves the original block untouched rather than fabricate a long,
+    misleading span — "now" carries no real information about when a task
+    finished hours after its window closed.
+
+    In every mode, if the resulting end would fall at or before the
+    event's actual start, the event is deleted instead — nothing
+    meaningful to preserve in that case.
     """
     try:
         service = get_personal_service()
         now = datetime.now()
 
-        # Get the existing event
         event = service.events().get(calendarId="primary", eventId=event_id).execute()
 
         start_raw = event.get("start", {}).get("dateTime")
-        if start_raw:
-            start_dt = datetime.fromisoformat(start_raw).replace(tzinfo=None)
-            if now <= start_dt:
-                service.events().delete(
-                    calendarId="primary", eventId=event_id
-                ).execute()
+        end_raw = event.get("end", {}).get("dateTime")
+        start_dt = (
+            datetime.fromisoformat(start_raw).replace(tzinfo=None)
+            if start_raw
+            else None
+        )
+
+        target_end = None
+
+        if actual_end is not None:
+            target_end = actual_end
+        elif actual_duration_minutes is not None and start_dt is not None:
+            target_end = start_dt + timedelta(minutes=actual_duration_minutes)
+        else:
+            # No explicit info — apply the grace-window heuristic.
+            end_dt = (
+                datetime.fromisoformat(end_raw).replace(tzinfo=None)
+                if end_raw
+                else None
+            )
+            grace = timedelta(minutes=30)
+            if end_dt is not None and now > end_dt + grace:
                 print(
-                    f"Deleted calendar event {event_id} (completed before its scheduled start)"
+                    f"Left calendar event {event_id} unchanged "
+                    f"(completed well after its scheduled end, no time/duration given)"
                 )
                 return True
+            target_end = now
 
-        # Update end time to now
-        event["end"] = {"dateTime": now.isoformat(), "timeZone": "America/New_York"}
+        if start_dt is not None and target_end <= start_dt:
+            service.events().delete(calendarId="primary", eventId=event_id).execute()
+            print(
+                f"Deleted calendar event {event_id} (completed at or before its scheduled start)"
+            )
+            return True
 
+        event["end"] = {
+            "dateTime": target_end.isoformat(),
+            "timeZone": "America/New_York",
+        }
         service.events().update(
             calendarId="primary", eventId=event_id, body=event
         ).execute()
 
-        print(f"Truncated calendar event: {event_id} to {now.strftime('%I:%M %p')}")
+        print(f"Set calendar event {event_id} end to {target_end.strftime('%I:%M %p')}")
         return True
     except Exception as e:
-        print(f"Could not truncate event {event_id}: {e}")
+        print(f"Could not adjust event {event_id}: {e}")
         return False
 
 

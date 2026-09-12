@@ -21,6 +21,10 @@ export default function ContextMenu({
   const [remaining, setRemaining] = React.useState("");
   const [completionNote, setCompletionNote] = React.useState("");
   const [addFollowUp, setAddFollowUp] = React.useState(false);
+  const [completedAtMode, setCompletedAtMode] = React.useState("time");
+  const [completedAtClock, setCompletedAtClock] = React.useState("");
+  const [completedAtHours, setCompletedAtHours] = React.useState("");
+  const [completedAtMinutes, setCompletedAtMinutes] = React.useState("");
 
   const menuRef = React.useRef(null);
   const [menuStyle, setMenuStyle] = React.useState({});
@@ -70,6 +74,33 @@ export default function ContextMenu({
     if (addFollowUp) {
       onCompleteAddNext(`Follow-up to "${title}": `);
     }
+  }
+
+  async function handleCompletedAt() {
+    setSubmitting(true);
+    const body = { task_title: title };
+
+    if (completedAtMode === "time" && completedAtClock) {
+      const [hh, mm] = completedAtClock.split(":").map(Number);
+      const d = event.start; // real scheduled date this event is on
+      const y = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      body.actual_completion_time = `${y}-${mo}-${day}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    } else if (completedAtMode === "duration") {
+      const totalMinutes =
+        (parseInt(completedAtHours) || 0) * 60 +
+        (parseInt(completedAtMinutes) || 0);
+      body.actual_duration = `${totalMinutes}min`;
+    }
+
+    await fetch(`${API}/complete-task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    onClose();
+    onRefresh();
   }
 
   async function handleStoppingNow() {
@@ -156,6 +187,9 @@ export default function ContextMenu({
             <button onClick={() => setView("completePlus")}>
               ➕ Complete & Add
             </button>
+            <button onClick={() => setView("completedAt")}>
+              🕐 Completed At/In
+            </button>
             <button onClick={() => setView("stopping")}>⏸ Stopping Now</button>
             <button onClick={() => setView("retry")}>↩ Retry Later</button>
             <button onClick={handleUnschedule}>📋 Unschedule</button>
@@ -205,6 +239,90 @@ export default function ContextMenu({
                 className="btn-primary"
                 onClick={handleCompletePlus}
                 disabled={submitting}
+              >
+                {submitting ? "..." : "Complete"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Completed At/In form */}
+        {view === "completedAt" && (
+          <div className="context-form">
+            <div className="form-field">
+              <label>How do you want to record this?</label>
+              <div
+                className="context-form-buttons"
+                style={{ marginBottom: "8px" }}
+              >
+                <button
+                  className={
+                    completedAtMode === "time" ? "btn-primary" : "btn-ghost"
+                  }
+                  onClick={() => setCompletedAtMode("time")}
+                >
+                  At a time
+                </button>
+                <button
+                  className={
+                    completedAtMode === "duration" ? "btn-primary" : "btn-ghost"
+                  }
+                  onClick={() => setCompletedAtMode("duration")}
+                >
+                  Took (duration)
+                </button>
+              </div>
+            </div>
+
+            {completedAtMode === "time" ? (
+              <div className="form-field">
+                <label>Actually finished at</label>
+                <input
+                  type="time"
+                  value={completedAtClock}
+                  onChange={(e) => setCompletedAtClock(e.target.value)}
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <div className="form-field">
+                <label>Actual time it took</label>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="hr"
+                    value={completedAtHours}
+                    onChange={(e) => setCompletedAtHours(e.target.value)}
+                    style={{ width: "60px" }}
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max="59"
+                    placeholder="min"
+                    value={completedAtMinutes}
+                    onChange={(e) => setCompletedAtMinutes(e.target.value)}
+                    style={{ width: "60px" }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="context-form-buttons">
+              <button className="btn-ghost" onClick={() => setView("main")}>
+                ← Back
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleCompletedAt}
+                disabled={
+                  submitting ||
+                  (completedAtMode === "time" && !completedAtClock) ||
+                  (completedAtMode === "duration" &&
+                    !completedAtHours &&
+                    !completedAtMinutes)
+                }
               >
                 {submitting ? "..." : "Complete"}
               </button>
