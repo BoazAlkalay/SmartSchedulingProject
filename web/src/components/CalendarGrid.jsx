@@ -17,11 +17,80 @@ let bracketsCache = [];
 let ghostCache = [];
 let bracketProposalCache = [];
 
-async function fetchBrackets(dateRange) {
-  const res = await fetch(`${API}/brackets`);
-  const data = await res.json();
-  const brackets = data.brackets || [];
+// ── Other people's brackets ──────────────────────────────────────────────
+// A bracket with a `person` is someone else's availability. They are only
+// drawn for people picked in the chip row above the calendar, as narrow
+// lanes down the right edge of each day so they never tint over your own
+// brackets or hide behind events. They never affect scheduling -- the
+// backend keeps them out of Generate Schedule / Suggest Brackets.
+const PEOPLE_STORAGE_KEY = "smartscheduler.selectedPeople";
+const PERSON_LANE_WIDTH = 14; // px per selected person, per day column
+// Identity colours, chosen to stay clear of the green/red/blue/purple/amber
+// already used for brackets and events. Assigned by position in the sorted
+// list of names.
+const PERSON_COLORS = [
+  "#B0457A",
+  "#3F51A3",
+  "#7A5230",
+  "#4A5560",
+  "#7C7A1E",
+  "#0E7C9A",
+];
 
+let rawBracketsCache = []; // every bracket as last fetched, people's included
+let knownPeople = []; // sorted names found on brackets
+let selectedPeopleSet = loadSelectedPeople();
+
+function loadSelectedPeople() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(PEOPLE_STORAGE_KEY)) || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSelectedPeople() {
+  try {
+    localStorage.setItem(
+      PEOPLE_STORAGE_KEY,
+      JSON.stringify([...selectedPeopleSet]),
+    );
+  } catch {
+    // remembering the selection is a nicety -- fine without it
+  }
+}
+
+function peopleFrom(brackets) {
+  return [
+    ...new Set(brackets.filter((b) => b.person).map((b) => b.person)),
+  ].sort((a, b) => a.localeCompare(b));
+}
+
+function personColor(person) {
+  const i = Math.max(0, knownPeople.indexOf(person));
+  return PERSON_COLORS[i % PERSON_COLORS.length];
+}
+
+// People who are both selected and still exist, in chip order. A person's
+// position here is their lane (0 = far right of the day column).
+function shownPeople() {
+  return knownPeople.filter((p) => selectedPeopleSet.has(p));
+}
+
+async function fetchBrackets(dateRange) {
+  // include_people: plain /brackets leaves other people's brackets out on
+  // purpose (that is what keeps them away from scheduling), so the calendar
+  // has to ask for them.
+  const res = await fetch(`${API}/brackets?include_people=true`);
+  const data = await res.json();
+  rawBracketsCache = data.brackets || [];
+  knownPeople = peopleFrom(rawBracketsCache);
+  return bracketsToFCEvents(rawBracketsCache, dateRange);
+}
+
+// Build calendar events for brackets across a date range. Other people's
+// brackets are only included for people who are currently selected.
+function bracketsToFCEvents(brackets, dateRange) {
   const dayNames = [
     "sunday",
     "monday",
@@ -42,8 +111,30 @@ async function fetchBrackets(dateRange) {
     const dayName = dayNames[d.getDay()];
 
     for (const bracket of brackets) {
+      if (bracket.person && !selectedPeopleSet.has(bracket.person)) continue;
+
       const matchesDay = bracket.days?.includes(dayName);
       const matchesDate = bracket.specific_date === dateStr;
+
+      if ((matchesDay || matchesDate) && bracket.person) {
+        events.push({
+          id: `bracket_${bracket.id}_${dateStr}`,
+          title: bracket.name,
+          start: `${dateStr}T${bracket.start_time}:00`,
+          end: `${dateStr}T${bracket.end_time}:00`,
+          display: "background",
+          backgroundColor:
+            bracket.color === "green"
+              ? "rgba(61, 151, 95, 0.55)"
+              : "rgba(139, 46, 46, 0.55)",
+          classNames: ["bracket-person"],
+          extendedProps: {
+            type: "bracket",
+            bracket: bracket,
+          },
+        });
+        continue;
+      }
 
       if (matchesDay || matchesDate) {
         const isBasket = bracket.mode === "basket";
@@ -260,6 +351,38 @@ const CalendarGrid = forwardRef(function CalendarGrid(
   const ghostBlocksRef = useRef([]);
   const bracketProposalsRef = useRef([]);
 
+  // Other people's brackets: who exists, and who is switched on. The module
+  // level copies (knownPeople / selectedPeopleSet) are what the event
+  // builder reads; this state is what the chip row renders from.
+  const [people, setPeople] = useState([]);
+  const [selectedPeople, setSelectedPeople] = useState(() => [
+    ...selectedPeopleSet,
+  ]);
+  const shown = people.filter((p) => selectedPeople.includes(p));
+
+  function togglePerson(person) {
+    if (selectedPeopleSet.has(person)) selectedPeopleSet.delete(person);
+    else selectedPeopleSet.add(person);
+    saveSelectedPeople();
+    setSelectedPeople([...selectedPeopleSet]);
+
+    // Redraw from what's already loaded -- no network. Every person lane is
+    // rebuilt (not just this person's) because lanes close up when someone
+    // is switched off.
+    const api = calendarRef.current?.getApi();
+    if (!api) return;
+    const range = { start: api.view.activeStart, end: api.view.activeEnd };
+    api
+      .getEvents()
+      .filter((e) => e.extendedProps?.bracket?.person)
+      .forEach((e) => e.remove());
+    bracketsToFCEvents(
+      rawBracketsCache.filter((b) => b.person),
+      range,
+    ).forEach((e) => api.addEvent(e, true));
+    bracketsCache = bracketsToFCEvents(rawBracketsCache, range);
+  }
+
   useImperativeHandle(ref, () => ({
     refresh() {
       console.log("refresh called, clearing cache");
@@ -373,7 +496,10 @@ const CalendarGrid = forwardRef(function CalendarGrid(
   }, [view]);
 
   return (
-    <div className="calendar-grid">
+    <div
+      className="calendar-grid"
+      style={{ "--people-gutter": `${shown.length * PERSON_LANE_WIDTH}px` }}
+    >
       {/* ── Date label + color key ── */}
       <div className="calendar-header-row">
         {currentDateLabel && (
@@ -422,11 +548,57 @@ const CalendarGrid = forwardRef(function CalendarGrid(
                   />
                   <span>Overdue task</span>
                 </div>
+                {people.length > 0 && (
+                  <div className="color-key-item">
+                    <div
+                      className="color-key-dot"
+                      style={{
+                        background:
+                          "linear-gradient(90deg, #3D975F 50%, #8B2E2E 50%)",
+                      }}
+                    />
+                    <span>Edge lanes: other people (green free, red busy)</span>
+                  </div>
+                )}
               </div>
             </>
           )}
         </div>
       </div>
+
+      {/* ── People chips — only when someone else's brackets exist ── */}
+      {people.length > 0 && (
+        <div className="people-chip-row">
+          <span className="people-chip-label">👥</span>
+          {people.map((person) => {
+            const on = selectedPeople.includes(person);
+            const color = personColor(person);
+            return (
+              <button
+                key={person}
+                className={`people-chip ${on ? "active" : ""}`}
+                style={
+                  on
+                    ? { background: color, borderColor: color }
+                    : { borderColor: color }
+                }
+                onClick={() => togglePerson(person)}
+                title={
+                  on ? `Hide ${person}'s brackets` : `Show ${person}'s brackets`
+                }
+              >
+                {!on && (
+                  <span
+                    className="people-chip-dot"
+                    style={{ background: color }}
+                  />
+                )}
+                {person}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── FullCalendar ── */}
       <FullCalendar
@@ -517,6 +689,11 @@ const CalendarGrid = forwardRef(function CalendarGrid(
             fetchBrackets(fetchInfo),
           ]);
           bracketsCache = brackets;
+          // Only touch state when the list of names really changed, so this
+          // can't cause a render loop.
+          setPeople((prev) =>
+            prev.join("|") === knownPeople.join("|") ? prev : knownPeople,
+          );
           successCallback([...fresh, ...brackets]);
         }}
         eventClick={(info) => {
@@ -652,6 +829,32 @@ const CalendarGrid = forwardRef(function CalendarGrid(
               el.style.borderColor = "#3D6B4F";
             });
 
+            return;
+          }
+
+          if (
+            info.event.extendedProps.type === "bracket" &&
+            info.event.extendedProps.bracket.person
+          ) {
+            // Someone else's bracket: squeeze it into that person's lane at
+            // the right edge of the day column. The lanes sit in a gutter
+            // that events are kept out of (see --people-gutter in App.css),
+            // so they stay visible even on a busy day.
+            const bracket = info.event.extendedProps.bracket;
+            const lane = Math.max(0, shownPeople().indexOf(bracket.person));
+            const harness = el.parentElement;
+            if (harness) {
+              harness.style.left = "auto";
+              harness.style.right = `${lane * PERSON_LANE_WIDTH + 1}px`;
+              harness.style.width = `${PERSON_LANE_WIDTH - 2}px`;
+            }
+            const titleEl = el.querySelector(".fc-event-title");
+            if (titleEl) titleEl.style.display = "none";
+            el.style.borderLeft = `4px solid ${personColor(bracket.person)}`;
+            el.style.pointerEvents = "auto";
+            el.title = `${bracket.person} — ${bracket.name} (${
+              bracket.color === "green" ? "available" : "unavailable"
+            }) ${bracket.start_time}–${bracket.end_time}`;
             return;
           }
 

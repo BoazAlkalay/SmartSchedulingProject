@@ -1163,7 +1163,8 @@
 .bracket-tab {
   position: absolute;
   top: -18px;
-  right: 0;
+  /* sits just left of other people's lanes when any are shown */
+  right: var(--people-gutter, 0px);
   font-size: 10px;
   color: white;
   padding: 2px 8px;
@@ -1173,6 +1174,57 @@
   white-space: nowrap;
   pointer-events: none;
   z-index: 999 !important;
+}
+
+/* ── Other People's Brackets ── */
+.people-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 6px 0;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.people-chip-label {
+  font-size: 12px;
+}
+
+.people-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.people-chip.active {
+  color: white;
+}
+
+.people-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/* Keep events out of the strip where selected people's lanes are drawn.
+   --people-gutter is set on .calendar-grid (0 when nobody is selected), so
+   with no one selected this is exactly FullCalendar's default margin. */
+.calendar-grid .fc-direction-ltr .fc-timegrid-col-events {
+  margin: 0 calc(2.5% + var(--people-gutter, 0px)) 0 2px;
+}
+
+.fc-bg-event.bracket-person {
+  border-radius: 2px;
+  box-sizing: border-box;
 }
 
 /* ── Generate Schedule ── */
