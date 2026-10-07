@@ -74,7 +74,11 @@ function deadlineUrgency(deadline, plannedDate, status) {
 }
 
 function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {
-  const urgency = deadlineUrgency(task.deadline, task.planned_date, task.status);
+  const urgency = deadlineUrgency(
+    task.deadline,
+    task.planned_date,
+    task.status,
+  );
   const isInProgress = task.status === "in-progress";
 
   return (
@@ -658,6 +662,30 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
       <div className="task-list" ref={containerRef}>
         {loading && <p className="muted">Loading...</p>}
 
+        {/* Planned for viewed date — only shows when viewing a future date.
+            Placed at the very top so it's the first thing you see when
+            looking ahead, ahead of everything else (which isn't
+            date-specific to the date you're actually viewing). */}
+        {!loading && plannedForViewedDate.length > 0 && (
+          <>
+            <div
+              className="task-section-header"
+              style={{ color: "var(--green)" }}
+            >
+              📌 Planned for {viewedDateLabel}
+            </div>
+            {plannedForViewedDate.map((task) => (
+              <TaskCard
+                key={task.file}
+                task={task}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+                onRightClick={handleRightClick}
+              />
+            ))}
+          </>
+        )}
+
         {/* Today — planned for today, not yet scheduled */}
         {!loading && todayPlanned.length > 0 && (
           <>
@@ -713,26 +741,6 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
           <>
             <div className="task-section-header">📋 Unscheduled</div>
             {unscheduled.map((task) => (
-              <TaskCard
-                key={task.file}
-                task={task}
-                onTouchStart={handleTouchStart}
-                onTouchEnd={handleTouchEnd}
-                onRightClick={handleRightClick}
-              />
-            ))}
-          </>
-        )}
-        {/* Planned for viewed date — only shows when viewing a future date */}
-        {!loading && plannedForViewedDate.length > 0 && (
-          <>
-            <div
-              className="task-section-header"
-              style={{ color: "var(--green)" }}
-            >
-              📌 Planned for {viewedDateLabel}
-            </div>
-            {plannedForViewedDate.map((task) => (
               <TaskCard
                 key={task.file}
                 task={task}
