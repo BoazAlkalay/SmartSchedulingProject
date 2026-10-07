@@ -22,9 +22,49 @@ def save_brackets(brackets: list) -> None:
         json.dump(brackets, f, indent=2)
 
 
-def get_brackets() -> list:
-    """Return all active brackets."""
-    return [b for b in load_brackets() if b.get("active", True)]
+def get_brackets(include_people: bool = False) -> list:
+    """
+    Return all active brackets.
+
+    Brackets that belong to another person (non-empty "person" field) are
+    left out unless include_people=True. This is the single choke point that
+    keeps other people's availability out of Generate Schedule, Suggest
+    Brackets, and the basket lookups -- those all read brackets through here.
+    """
+    brackets = [b for b in load_brackets() if b.get("active", True)]
+    if include_people:
+        return brackets
+    return [b for b in brackets if not b.get("person")]
+
+
+def _normalize_person(person: str | None, brackets: list, skip_id: str = None) -> str:
+    """
+    Tidy a person name and reuse an existing spelling if one matches.
+
+    Collapses extra whitespace, then matches case-insensitively against the
+    names already on other brackets so "dana" and "Dana" stay one person.
+    skip_id leaves one bracket out of the lookup, so editing a bracket's own
+    name can change its capitalisation.
+    """
+    name = " ".join((person or "").split())
+    if not name:
+        return ""
+    for b in brackets:
+        if skip_id and b.get("id") == skip_id:
+            continue
+        existing = b.get("person") or ""
+        if existing.casefold() == name.casefold():
+            return existing
+    return name
+
+
+def get_people() -> list:
+    """
+    Return the distinct people named on active brackets, sorted by name.
+    Derived from the brackets themselves -- there is no separate people list.
+    """
+    names = {b["person"] for b in get_brackets(include_people=True) if b.get("person")}
+    return sorted(names, key=str.casefold)
 
 
 def create_bracket(
@@ -38,9 +78,18 @@ def create_bracket(
     reflections: str = "",
     specific_date: str = None,  # "2026-07-18" for one-off
     mode: str = "rigid",  # "rigid" or "basket"
+    person: str = "",  # "" = your own bracket, otherwise the person's name
+    notify: bool = None,  # None = default (on for one-offs, off for recurring)
 ) -> dict:
     """Create a new bracket and save it."""
     brackets = load_brackets()
+
+    person = _normalize_person(person, brackets)
+    if person:
+        # Rigid/basket only describes how your own brackets behave
+        mode = "rigid"
+    if notify is None:
+        notify = bool(person and specific_date)
 
     bracket = {
         "id": f"bracket_{uuid.uuid4().hex[:8]}",
@@ -54,6 +103,8 @@ def create_bracket(
         "description": description,
         "reflections": reflections,
         "mode": mode,
+        "person": person,
+        "notify": bool(notify),
         "active": True,
         "created": datetime.now().strftime("%Y-%m-%d"),
     }
@@ -69,7 +120,13 @@ def update_bracket(bracket_id: str, updates: dict) -> dict | None:
 
     for i, b in enumerate(brackets):
         if b["id"] == bracket_id:
+            if "person" in updates:
+                updates["person"] = _normalize_person(
+                    updates["person"], brackets, skip_id=bracket_id
+                )
             brackets[i].update(updates)
+            if brackets[i].get("person"):
+                brackets[i]["mode"] = "rigid"
             save_brackets(brackets)
             return brackets[i]
 
@@ -88,10 +145,11 @@ def delete_bracket(bracket_id: str) -> bool:
     return False
 
 
-def get_brackets_for_date(date_str: str) -> list:
+def get_brackets_for_date(date_str: str, include_people: bool = False) -> list:
     """
     Return all brackets that apply to a specific date.
     Checks both recurring day-of-week brackets and specific date brackets.
+    Other people's brackets are left out unless include_people=True.
     """
     from datetime import datetime
 
@@ -109,7 +167,7 @@ def get_brackets_for_date(date_str: str) -> list:
     day_of_week = day_names[date.weekday()]
 
     result = []
-    for b in get_brackets():
+    for b in get_brackets(include_people=include_people):
         # Check specific date match
         if b.get("specific_date") == date_str:
             result.append(b)

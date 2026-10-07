@@ -127,6 +127,8 @@ class CreateBracketRequest(BaseModel):
     reflections: Optional[str] = ""
     specific_date: Optional[str] = None
     mode: Optional[str] = "rigid"
+    person: Optional[str] = ""  # "" = your own bracket
+    notify: Optional[bool] = None  # None = on for one-offs, off for recurring
 
 
 class UpdateBracketRequest(BaseModel):
@@ -140,6 +142,9 @@ class UpdateBracketRequest(BaseModel):
     reflections: Optional[str] = None
     specific_date: Optional[str] = None
     active: Optional[bool] = None
+    mode: Optional[str] = None
+    person: Optional[str] = None  # send "" to turn it back into your own bracket
+    notify: Optional[bool] = None
 
 
 class GenerateScheduleRequest(BaseModel):
@@ -1117,12 +1122,26 @@ def consolidate_ideas_endpoint():
 
 
 @app.get("/brackets")
-def get_brackets_endpoint():
-    """Return all active brackets."""
+def get_brackets_endpoint(include_people: bool = False):
+    """
+    Return all active brackets.
+    Other people's brackets are only included with ?include_people=true.
+    """
     try:
         from bracket_manager import get_brackets
 
-        return {"brackets": get_brackets()}
+        return {"brackets": get_brackets(include_people=include_people)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/people")
+def get_people_endpoint():
+    """Return the distinct people named on brackets."""
+    try:
+        from bracket_manager import get_people
+
+        return {"people": get_people()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1158,6 +1177,8 @@ def create_bracket_endpoint(request: CreateBracketRequest):
             reflections=request.reflections,
             specific_date=request.specific_date,
             mode=request.mode,
+            person=request.person,
+            notify=request.notify,
         )
         return {"status": "created", "bracket": bracket}
     except Exception as e:
@@ -1194,12 +1215,17 @@ def delete_bracket_endpoint(bracket_id: str):
 
 
 @app.get("/brackets/date/{date_str}")
-def get_brackets_for_date_endpoint(date_str: str):
-    """Return brackets that apply to a specific date."""
+def get_brackets_for_date_endpoint(date_str: str, include_people: bool = False):
+    """
+    Return brackets that apply to a specific date.
+    Other people's brackets are only included with ?include_people=true.
+    """
     try:
         from bracket_manager import get_brackets_for_date
 
-        return {"brackets": get_brackets_for_date(date_str)}
+        return {
+            "brackets": get_brackets_for_date(date_str, include_people=include_people)
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
