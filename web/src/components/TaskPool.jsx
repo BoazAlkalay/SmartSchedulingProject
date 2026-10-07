@@ -135,10 +135,16 @@ function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {
 }
 const ENERGY_ORDER = { deep: 0, high: 1, medium: 2, low: 3, cantrip: 4 };
 
-// Unscheduled tasks due within this many days (or already overdue) get
-// pulled out of the Unscheduled pile into their own "Due Soon" section.
-// Kept at 7 to match the "Due This Week" filter's cut-off.
+// Cut-offs for the deadline sections that unscheduled tasks are sorted into
+// (see the bucketing just above the render in TaskPool):
+//   Due Today      deadline is today
+//   Recently Due   1 to RECENTLY_DUE_DAYS days late
+//   Due Soon       due in 1 to DUE_SOON_DAYS days
+//   Overdue        more than RECENTLY_DUE_DAYS days late
+//   Backlog        no deadline, or due further out than DUE_SOON_DAYS
+// DUE_SOON_DAYS is kept at 7 to match the "Due This Week" filter's cut-off.
 const DUE_SOON_DAYS = 7;
+const RECENTLY_DUE_DAYS = 5;
 
 function sortByUrgency(tasks) {
   return [...tasks].sort((a, b) => {
@@ -174,7 +180,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
   const [taskMenu, setTaskMenu] = React.useState(null);
   const menuRef = React.useRef(null);
   const [menuStyle, setMenuStyle] = React.useState({});
-  const [filter, setFilter] = React.useState("all");
+  const [filter, setFilter] = React.useState("focused");
   const [plannedLater, setPlannedLater] = React.useState([]);
   const [showPlannedLater, setShowPlannedLater] = React.useState(false);
 
@@ -638,34 +644,63 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
       ),
     ),
   );
-  // Due Soon = unscheduled tasks that are overdue or due within
-  // DUE_SOON_DAYS of the real today. Each task lands in exactly one of the
-  // two lists, so nothing is shown twice.
-  const isDueSoon = (t) => {
+  // Sort every unscheduled task into exactly one deadline bucket, counted
+  // from the real today (not the viewed date) so it agrees with the
+  // "Due in 3d" labels. Anything without a usable deadline falls through to
+  // Backlog, so a task can never end up in no section at all.
+  const deadlineBucket = (t) => {
     const u = deadlineUrgency(t.deadline, t.planned_date, t.status);
-    return u !== null && u.days <= DUE_SOON_DAYS;
+    if (!u) return "backlog";
+    if (u.days === 0) return "dueToday";
+    if (u.days < -RECENTLY_DUE_DAYS) return "overdue";
+    if (u.days < 0) return "recentlyDue";
+    if (u.days >= 1 && u.days <= DUE_SOON_DAYS) return "dueSoon";
+    return "backlog";
   };
-  const dueSoon = unscheduledAll.filter(isDueSoon);
-  const unscheduled = unscheduledAll.filter((t) => !isDueSoon(t));
+  const buckets = {
+    dueToday: [],
+    recentlyDue: [],
+    dueSoon: [],
+    overdue: [],
+    backlog: [],
+  };
+  unscheduledAll.forEach((t) => buckets[deadlineBucket(t)].push(t));
+  const { dueToday, recentlyDue, dueSoon, overdue, backlog } = buckets;
 
-  // Today — planned for today, not yet scheduled. Built once and placed in
-  // one of two spots: at the top when viewing today, or below Unscheduled
-  // when viewing a future date (so the viewed date leads, but today's
-  // leftovers stay reachable).
-  const todaySection = !loading && todayPlanned.length > 0 && (
-    <>
-      <div className="task-section-header">📋 Today</div>
-      {todayPlanned.map((task) => (
-        <TaskCard
-          key={task.file}
-          task={task}
-          onTouchStart={handleTouchStart}
-          onTouchEnd={handleTouchEnd}
-          onRightClick={handleRightClick}
-        />
-      ))}
-    </>
-  );
+  // How many current tasks the active filter is hiding. Shown as a one-line
+  // note at the bottom so filtered-out tasks (mostly Backlog, now that
+  // Focused is the default) never silently disappear.
+  const hiddenCount = tasks.length - applyFilter(tasks).length;
+
+  // One header + its task cards. Returns nothing while loading or when the
+  // list is empty, so empty sections never render.
+  const renderSection = (label, list, color) =>
+    !loading &&
+    list.length > 0 && (
+      <>
+        <div
+          className="task-section-header"
+          style={color ? { color } : undefined}
+        >
+          {label}
+        </div>
+        {list.map((task) => (
+          <TaskCard
+            key={task.file}
+            task={task}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onRightClick={handleRightClick}
+          />
+        ))}
+      </>
+    );
+
+  // Planned Today — planned for today, not yet scheduled. Built once and
+  // placed in one of two spots: at the top when viewing today, or below
+  // Backlog when viewing a future date (so the viewed date leads, but
+  // today's leftovers stay reachable).
+  const todaySection = renderSection("📋 Planned Today", todayPlanned);
 
   const isInProgressTask = taskMenu?.task?.status === "in-progress";
 
@@ -677,9 +712,9 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
       {/* ── Filter Bar ── */}
       <div className="task-filter-bar">
         {[
-          { key: "all", label: "All" },
-          { key: "due_soon", label: "Due This Week" },
           { key: "focused", label: "Focused" },
+          { key: "due_soon", label: "Due This Week" },
+          { key: "all", label: "All" },
         ].map((f) => (
           <button
             key={f.key}
@@ -719,7 +754,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
           </>
         )}
 
-        {/* Today — at the top when viewing today */}
+        {/* Planned Today — at the top when viewing today */}
         {!isViewingFuture && todaySection}
 
         {/* Scheduled — has a specific time slot today */}
@@ -756,42 +791,41 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
           </>
         )}
 
-        {/* Due Soon — unscheduled but overdue or due within DUE_SOON_DAYS */}
-        {!loading && dueSoon.length > 0 && (
-          <>
-            <div className="task-section-header" style={{ color: "#C4832A" }}>
-              ⏰ Due Soon
-            </div>
-            {dueSoon.map((task) => (
-              <TaskCard
-                key={task.file}
-                task={task}
-                onTouchStart={handleTouchStart}
-                onTouchEnd={handleTouchEnd}
-                onRightClick={handleRightClick}
-              />
-            ))}
-          </>
-        )}
+        {/* Deadline sections — unscheduled tasks, most pressing first.
+            Each task is in exactly one of these or in Backlog. */}
+        {renderSection("🎯 Due Today", dueToday, "#C4832A")}
+        {renderSection("⏳ Recently Due", recentlyDue, "#8B2E2E")}
+        {renderSection("⏰ Due Soon", dueSoon, "#D4A843")}
+        {renderSection("🚨 Overdue", overdue, "#6B6560")}
 
-        {/* Unscheduled — everything else */}
-        {!loading && unscheduled.length > 0 && (
-          <>
-            <div className="task-section-header">📋 Unscheduled</div>
-            {unscheduled.map((task) => (
-              <TaskCard
-                key={task.file}
-                task={task}
-                onTouchStart={handleTouchStart}
-                onTouchEnd={handleTouchEnd}
-                onRightClick={handleRightClick}
-              />
-            ))}
-          </>
-        )}
+        {/* Backlog — no deadline, or due further out than DUE_SOON_DAYS */}
+        {renderSection("📋 Backlog", backlog)}
 
-        {/* Today — below Unscheduled when viewing a future date */}
+        {/* Planned Today — below Backlog when viewing a future date */}
         {isViewingFuture && todaySection}
+
+        {/* Hidden-by-filter note — tap to switch to All */}
+        {!loading && filter !== "all" && hiddenCount > 0 && (
+          <button
+            type="button"
+            className="muted"
+            onClick={() => setFilter("all")}
+            style={{
+              display: "block",
+              width: "100%",
+              margin: "8px 0",
+              padding: "6px",
+              background: "none",
+              border: "none",
+              fontSize: "12px",
+              cursor: "pointer",
+              textAlign: "center",
+              textDecoration: "underline",
+            }}
+          >
+            {hiddenCount} more hidden · Show all
+          </button>
+        )}
 
         {/* Planned for Later — collapsible, excludes viewed date */}
         {!loading &&
@@ -863,8 +897,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
           inProgress.length === 0 &&
           todayPlanned.length === 0 &&
           scheduled.length === 0 &&
-          dueSoon.length === 0 &&
-          unscheduled.length === 0 && (
+          unscheduledAll.length === 0 && (
             <p className="muted">No tasks match this filter.</p>
           )}
       </div>
