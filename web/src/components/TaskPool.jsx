@@ -24,10 +24,21 @@ function EnergyLegend() {
   );
 }
 
+// The day deadlines are counted from. Before 3am it's treated as still the
+// previous day, so a task due "today" doesn't flip to late at midnight while
+// you're still up. Same rule the backend uses when it resolves words like
+// "today" (effective_now in date_parser.py and task_entry.py) -- keep the
+// two in step, or a deadline set to "today" at 1am would show as late.
+function effectiveToday() {
+  const d = new Date();
+  if (d.getHours() < 3) d.setDate(d.getDate() - 1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 function deadlineUrgency(deadline, plannedDate, status) {
   if (!deadline || deadline === "None") return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = effectiveToday();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
   // Split off an optional time component (YYYY-MM-DDTHH:MM) before parsing the date
@@ -60,7 +71,9 @@ function deadlineUrgency(deadline, plannedDate, status) {
     if (hasCurrentPlan) {
       return { label: null, color: "#8B2E2E", days };
     }
-    return { label: "Overdue", color: "#8B2E2E", days };
+    // "2d late" rather than "Overdue", so the card says how late and
+    // doesn't clash with the Overdue section's name.
+    return { label: `${-days}d late`, color: "#8B2E2E", days };
   }
   if (days === 0)
     return { label: `Due today${formatTime()}`, color: "#C4832A", days };
@@ -558,11 +571,11 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
   async function handleChangeDeadline(task) {
     const current = task.deadline || "";
     const input = prompt(
-      `Change deadline for "${task.title}" (YYYY-MM-DD or YYYY-MM-DDTHH:MM, leave blank to remove):`,
+      `Change deadline for "${task.title}"\n(e.g. today, yesterday, friday 5pm, oct 12, or 2026-10-12 — leave blank to remove)`,
       current,
     );
     if (input === null) return; // cancelled
-    await fetch(`${API}/set-deadline`, {
+    const res = await fetch(`${API}/set-deadline`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -570,7 +583,14 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
         deadline: input.trim() || null,
       }),
     });
+    const data = await res.json();
     setTaskMenu(null);
+    // The backend refuses anything it can't resolve to a real date, and
+    // leaves the old deadline in place — say so rather than failing quietly.
+    if (data.status === "unparsed") {
+      alert(data.message);
+      return;
+    }
     refreshAll();
   }
 

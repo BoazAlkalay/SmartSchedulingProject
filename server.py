@@ -1435,17 +1435,43 @@ def split_task_endpoint(request: SplitTaskRequest):
 
 @app.post("/set-deadline")
 def set_deadline_endpoint(request: SetDeadlineRequest):
-    """Change or remove a task's deadline."""
+    """
+    Change or remove a task's deadline.
+
+    Accepts natural language ("today", "yesterday", "friday 5pm", "oct 12")
+    as well as YYYY-MM-DD / YYYY-MM-DDTHH:MM. The text is always resolved to
+    a real date before it is written -- if it can't be understood, nothing
+    is saved and status "unparsed" is returned, so the literal words can
+    never end up in a task file.
+    """
     try:
         from reschedule import find_task_file, update_task_file
+        from date_parser import parse_natural_date
 
         filepath = find_task_file(request.task_title)
         if not filepath:
             raise HTTPException(
                 status_code=404, detail=f"Task not found: {request.task_title}"
             )
-        update_task_file(filepath, {"deadline": request.deadline or None})
-        return {"status": "updated", "deadline": request.deadline or None}
+
+        text = (request.deadline or "").strip()
+        if not text:
+            update_task_file(filepath, {"deadline": None})
+            return {"status": "updated", "deadline": None}
+
+        parsed = parse_natural_date(text)
+        if parsed is None:
+            return {
+                "status": "unparsed",
+                "message": (
+                    f'Couldn\'t read "{text}" as a date, so the deadline was '
+                    "left unchanged. Try: today, tomorrow, friday 5pm, "
+                    "oct 12, or 2026-10-12."
+                ),
+            }
+
+        update_task_file(filepath, {"deadline": parsed})
+        return {"status": "updated", "deadline": parsed}
     except HTTPException:
         raise
     except Exception as e:
