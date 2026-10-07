@@ -30,6 +30,9 @@ function BracketRow({ bracket, onDelete, onEdit }) {
         <span className="bracket-row-name">{bracket.name}</span>
         <span className="bracket-row-meta">
           {bracket.start_time} – {bracket.end_time} · {dayStr}
+          {bracket.person &&
+            ` · ${bracket.color === "green" ? "available" : "unavailable"}`}
+          {bracket.person && bracket.notify && " · 🔔"}
         </span>
         {bracket.description && (
           <span className="bracket-row-desc">{bracket.description}</span>
@@ -47,8 +50,11 @@ function BracketRow({ bracket, onDelete, onEdit }) {
   );
 }
 
-function BracketEditForm({ bracket, onSave, onCancel }) {
+function BracketEditForm({ bracket, people, onSave, onCancel }) {
   const [name, setName] = React.useState(bracket.name);
+  const [person, setPerson] = React.useState(bracket.person || "");
+  const [notify, setNotify] = React.useState(Boolean(bracket.notify));
+  const isPerson = person.trim() !== "";
   const [color, setColor] = React.useState(bracket.color);
   const [startTime, setStartTime] = React.useState(bracket.start_time);
   const [endTime, setEndTime] = React.useState(bracket.end_time);
@@ -80,6 +86,9 @@ function BracketEditForm({ bracket, onSave, onCancel }) {
         days,
         description,
         reflections,
+        // "" turns it back into your own bracket
+        person: person.trim(),
+        notify: isPerson ? notify : undefined,
       }),
     });
     setSubmitting(false);
@@ -97,22 +106,60 @@ function BracketEditForm({ bracket, onSave, onCancel }) {
         />
       </div>
       <div className="form-field">
+        <label>
+          Person{" "}
+          <span className="optional">
+            (optional — leave blank for your own bracket)
+          </span>
+        </label>
+        <input
+          type="text"
+          list="bracket-edit-people-list"
+          value={person}
+          onChange={(e) => setPerson(e.target.value)}
+        />
+        <datalist id="bracket-edit-people-list">
+          {people.map((p) => (
+            <option key={p} value={p} />
+          ))}
+        </datalist>
+      </div>
+      <div className="form-field">
         <label>Type</label>
         <div className="bracket-type-toggle">
           <button
             className={color === "green" ? "active green" : ""}
             onClick={() => setColor("green")}
           >
-            🟢 Schedule here
+            {isPerson ? "🟢 Available" : "🟢 Schedule here"}
           </button>
           <button
             className={color === "red" ? "active red" : ""}
             onClick={() => setColor("red")}
           >
-            🔴 Block off
+            {isPerson ? "🔴 Unavailable" : "🔴 Block off"}
           </button>
         </div>
       </div>
+      {isPerson && (
+        <div className="form-field">
+          <label>Hint when hidden</label>
+          <div className="checkin-mode-toggle">
+            <button
+              className={notify ? "active" : ""}
+              onClick={() => setNotify(true)}
+            >
+              🔔 On
+            </button>
+            <button
+              className={!notify ? "active" : ""}
+              onClick={() => setNotify(false)}
+            >
+              Off
+            </button>
+          </div>
+        </div>
+      )}
       <div className="form-field">
         <label>Time</label>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -184,7 +231,10 @@ export default function BracketManager({ onClose, onSaved }) {
   const [editingBracket, setEditingBracket] = React.useState(null);
 
   function loadBrackets() {
-    fetch(`${API}/brackets`)
+    // include_people so other people's brackets can be seen, edited and
+    // deleted here. (Plain /brackets leaves them out on purpose -- that's
+    // what keeps them away from scheduling.)
+    fetch(`${API}/brackets?include_people=true`)
       .then((r) => r.json())
       .then((data) => {
         setBrackets(data.brackets || []);
@@ -221,8 +271,20 @@ export default function BracketManager({ onClose, onSaved }) {
     return true;
   });
 
-  const greenBrackets = visibleBrackets.filter((b) => b.color === "green");
-  const redBrackets = visibleBrackets.filter((b) => b.color === "red");
+  // Your own brackets vs. other people's. People are derived from the names
+  // on the brackets themselves -- there's no separate people list.
+  const ownBrackets = visibleBrackets.filter((b) => !b.person);
+  const greenBrackets = ownBrackets.filter((b) => b.color === "green");
+  const redBrackets = ownBrackets.filter((b) => b.color === "red");
+  const people = [
+    ...new Set(brackets.filter((b) => b.person).map((b) => b.person)),
+  ].sort((a, b) => a.localeCompare(b));
+  const peopleWithVisible = people
+    .map((p) => ({
+      person: p,
+      brackets: visibleBrackets.filter((b) => b.person === p),
+    }))
+    .filter((g) => g.brackets.length > 0);
 
   return (
     <>
@@ -240,6 +302,7 @@ export default function BracketManager({ onClose, onSaved }) {
           {editingBracket ? (
             <BracketEditForm
               bracket={editingBracket}
+              people={people}
               onSave={handleEditSave}
               onCancel={() => setEditingBracket(null)}
             />
@@ -275,6 +338,30 @@ export default function BracketManager({ onClose, onSaved }) {
                       onDelete={handleDelete}
                       onEdit={handleEdit}
                     />
+                  ))}
+                </div>
+              )}
+
+              {peopleWithVisible.length > 0 && (
+                <div className="bracket-section">
+                  <div className="bracket-section-header">👥 Other People</div>
+                  {peopleWithVisible.map((group) => (
+                    <div key={group.person} style={{ marginBottom: "8px" }}>
+                      <div
+                        className="muted"
+                        style={{ fontSize: "12px", fontWeight: 600 }}
+                      >
+                        {group.person}
+                      </div>
+                      {group.brackets.map((b) => (
+                        <BracketRow
+                          key={b.id}
+                          bracket={b}
+                          onDelete={handleDelete}
+                          onEdit={handleEdit}
+                        />
+                      ))}
+                    </div>
                   ))}
                 </div>
               )}
