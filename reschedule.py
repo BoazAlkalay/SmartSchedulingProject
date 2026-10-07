@@ -83,6 +83,55 @@ def is_blocked(metadata: dict) -> bool:
     return False
 
 
+# Cut-offs for when a deadline counts as pressing. These mirror
+# RECENTLY_DUE_DAYS / DUE_SOON_DAYS in web/src/components/TaskPool.jsx --
+# change them together, or the pool and the scheduler will disagree about
+# which muted tasks are hidden.
+RECENTLY_DUE_DAYS = 5
+DUE_SOON_DAYS = 7
+
+
+def is_muted(metadata: dict, now: datetime = None) -> bool:
+    """
+    True if a task is muted AND nothing currently overrides the mute.
+
+    "Mute for now" only ever hides a task that would otherwise sit in the
+    pool's Overdue or Backlog sections. The mute is ignored (returns False)
+    when the task is clearly live:
+      - it is scheduled or in progress
+      - it is planned for today or a later date
+      - its deadline is pressing: up to RECENTLY_DUE_DAYS late, due today,
+        or due within DUE_SOON_DAYS
+
+    Used by Generate Schedule, What Now and the basket pool so a muted task
+    is skipped server-side, not just hidden in the web app.
+    """
+    if not metadata.get("muted"):
+        return False
+    if metadata.get("status") in ("scheduled", "in-progress"):
+        return False
+
+    from date_parser import effective_now
+
+    now = now or datetime.now()
+
+    planned = str(metadata.get("planned_date") or "")
+    if planned and planned != "None" and planned[:10] >= now.strftime("%Y-%m-%d"):
+        return False
+
+    deadline = str(metadata.get("deadline") or "")
+    if deadline and deadline != "None":
+        try:
+            due = datetime.strptime(deadline[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return True  # unreadable deadline -- treat as no deadline
+        days = (due - effective_now(now).date()).days
+        if -RECENTLY_DUE_DAYS <= days <= DUE_SOON_DAYS:
+            return False
+
+    return True
+
+
 def panic_button(reason: str = "") -> str:
     """
     Panic button - nothing gets done, redistribute without judgment.
@@ -854,6 +903,8 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
     new_metadata["times_deferred"] = 0
     new_metadata["duration_actual"] = None
     new_metadata["created"] = datetime.now().strftime("%Y-%m-%d")
+    # A fresh occurrence starts unmuted even if the finished one was muted
+    new_metadata["muted"] = False
 
     if has_hard_deadline:
         # Deadline-driven recurring task

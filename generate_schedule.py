@@ -28,6 +28,12 @@ def get_tasks_for_scheduling(scope_days: int, target_date: str = None) -> list:
             if status not in ["unscheduled", "in-progress"]:
                 continue
 
+            # Skip tasks muted "for now" -- enforced here, not in the prompt
+            from reschedule import is_muted
+
+            if is_muted(post.metadata):
+                continue
+
             planned_date = str(post.metadata.get("planned_date", "") or "")
             deadline = str(post.metadata.get("deadline", "") or "")
 

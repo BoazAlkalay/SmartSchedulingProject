@@ -12,10 +12,12 @@ def get_all_tasks():
     """
     read tasks from inbox and all task subfolders
     """
+    from reschedule import is_blocked, is_muted
+
     tasks = []
 
-    # read inbox
-    tasks.extend(read_tasks("inbox"))
+    # read inbox (skipping tasks muted "for now")
+    tasks.extend(t for t in read_tasks("inbox") if not is_muted(t["metadata"]))
 
     # read tasks folder recursively
     for file in TASKS.rglob("*.md"):
@@ -27,9 +29,11 @@ def get_all_tasks():
             if post.metadata.get("status") == "done":
                 continue
 
-            from reschedule import is_blocked
-
             if is_blocked(post.metadata):
+                continue
+
+            # skip tasks muted "for now"
+            if is_muted(post.metadata):
                 continue
 
             tasks.append(

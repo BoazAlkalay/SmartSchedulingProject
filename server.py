@@ -183,6 +183,11 @@ class UnplanRequest(BaseModel):
     task_title: str
 
 
+class MuteTaskRequest(BaseModel):
+    task_title: str
+    muted: bool = True  # False = unmute
+
+
 class ExcludeFromBasketRequest(BaseModel):
     task_id: str
 
@@ -401,6 +406,7 @@ def get_current_tasks():
                         "priority": post.metadata.get("priority", "medium"),
                         "progress": post.metadata.get("progress", ""),
                         "created": str(post.metadata.get("created", "")) or None,
+                        "muted": bool(post.metadata.get("muted", False)),
                     }
                 )
 
@@ -1491,6 +1497,29 @@ def unplan_task_endpoint(request: UnplanRequest):
             )
         update_task_file(filepath, {"planned_date": None})
         return {"status": "unplanned"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/mute-task")
+def mute_task_endpoint(request: MuteTaskRequest):
+    """
+    Mute a task "for now" (or unmute it). A muted task is tucked into the
+    pool's collapsed Muted section and skipped by Generate Schedule, What Now
+    and baskets -- see is_muted() in reschedule.py for when a mute is ignored.
+    """
+    try:
+        from reschedule import find_task_file, update_task_file
+
+        filepath = find_task_file(request.task_title)
+        if not filepath:
+            raise HTTPException(
+                status_code=404, detail=f"Task not found: {request.task_title}"
+            )
+        update_task_file(filepath, {"muted": bool(request.muted)})
+        return {"status": "muted" if request.muted else "unmuted"}
     except HTTPException:
         raise
     except Exception as e:

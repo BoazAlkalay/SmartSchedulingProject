@@ -117,7 +117,10 @@ function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {
         }}
       />
       <div className="task-card-body">
-        <span className="task-card-title">{task.title}</span>
+        <span className="task-card-title">
+          {task.title}
+          {task.muted && <span title="Muted for now"> 🔇</span>}
+        </span>
         {isInProgress && task.progress && (
           <span className="task-progress-badge">{task.progress}</span>
         )}
@@ -159,6 +162,15 @@ const ENERGY_ORDER = { deep: 0, high: 1, medium: 2, low: 3, cantrip: 4 };
 const DUE_SOON_DAYS = 7;
 const RECENTLY_DUE_DAYS = 5;
 
+// TaskPool is remounted on every refresh (App re-keys it), which would snap
+// these back to their defaults after any action -- e.g. muting a task while
+// on "All" would jump you back to Focused. Kept at module level so they
+// survive a remount but still reset to the defaults when the app reloads.
+const remembered = { filter: "focused", showMuted: false };
+function remember(key, value) {
+  remembered[key] = value;
+}
+
 function sortByUrgency(tasks) {
   return [...tasks].sort((a, b) => {
     const ua = deadlineUrgency(a.deadline, a.planned_date, a.status);
@@ -193,9 +205,18 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
   const [taskMenu, setTaskMenu] = React.useState(null);
   const menuRef = React.useRef(null);
   const [menuStyle, setMenuStyle] = React.useState({});
-  const [filter, setFilter] = React.useState("focused");
+  const [filter, setFilterState] = React.useState(remembered.filter);
+  const setFilter = (f) => {
+    remember("filter", f);
+    setFilterState(f);
+  };
   const [plannedLater, setPlannedLater] = React.useState([]);
   const [showPlannedLater, setShowPlannedLater] = React.useState(false);
+  const [showMuted, setShowMutedState] = React.useState(remembered.showMuted);
+  const setShowMuted = (v) => {
+    remember("showMuted", v);
+    setShowMutedState(v);
+  };
 
   const containerRef = useRef(null);
   const longPressTimer = useRef(null);
@@ -594,6 +615,16 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
     refreshAll();
   }
 
+  async function handleMute(task, muted) {
+    await fetch(`${API}/mute-task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_title: task.title, muted }),
+    });
+    setTaskMenu(null);
+    refreshAll();
+  }
+
   async function handleUnplan(task) {
     await fetch(`${API}/unplan-task`, {
       method: "POST",
@@ -677,15 +708,36 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
     if (u.days >= 1 && u.days <= DUE_SOON_DAYS) return "dueSoon";
     return "backlog";
   };
+  // "Mute for now" only takes effect where a task would otherwise sit in
+  // Overdue or Backlog. A muted task with a pressing deadline stays in its
+  // deadline section, so nothing urgent can be hidden. The backend applies
+  // the same rule to Generate Schedule and What Now (is_muted in
+  // reschedule.py) -- keep the two in step.
+  const isMutable = (t) => {
+    const b = deadlineBucket(t);
+    return b === "overdue" || b === "backlog";
+  };
+  // Whether to offer "Mute for now" in a task's menu: only where it would
+  // actually do something.
+  const canMute = (t) =>
+    !t.muted &&
+    t.status !== "scheduled" &&
+    t.status !== "in-progress" &&
+    (!t.planned_date || t.planned_date < todayStr) &&
+    isMutable(t);
   const buckets = {
     dueToday: [],
     recentlyDue: [],
     dueSoon: [],
     overdue: [],
     backlog: [],
+    muted: [],
   };
-  unscheduledAll.forEach((t) => buckets[deadlineBucket(t)].push(t));
+  unscheduledAll.forEach((t) =>
+    buckets[t.muted && isMutable(t) ? "muted" : deadlineBucket(t)].push(t),
+  );
   const { dueToday, recentlyDue, dueSoon, overdue, backlog } = buckets;
+  const mutedTasks = buckets.muted;
 
   // How many current tasks the active filter is hiding. Shown as a one-line
   // note at the bottom so filtered-out tasks (mostly Backlog, now that
@@ -845,6 +897,37 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
           >
             {hiddenCount} more hidden · Show all
           </button>
+        )}
+
+        {/* Muted — collapsed by default; tasks set aside with "Mute for now" */}
+        {!loading && mutedTasks.length > 0 && (
+          <div className="planned-later-section">
+            <button
+              className="planned-later-header"
+              onClick={() => setShowMuted(!showMuted)}
+            >
+              <span>
+                {showMuted ? "▾" : "▸"} 🔇 Muted ({mutedTasks.length})
+              </span>
+            </button>
+
+            {showMuted && (
+              <div
+                className="planned-later-list"
+                style={{ display: "flex", flexDirection: "column", gap: "6px" }}
+              >
+                {mutedTasks.map((task) => (
+                  <TaskCard
+                    key={task.file}
+                    task={task}
+                    onTouchStart={handleTouchStart}
+                    onTouchEnd={handleTouchEnd}
+                    onRightClick={handleRightClick}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {/* Planned for Later — collapsible, excludes viewed date */}
@@ -1019,6 +1102,16 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
                 <button onClick={() => handleChangeDeadline(taskMenu.task)}>
                   📆 Change Deadline
                 </button>
+                {canMute(taskMenu.task) && (
+                  <button onClick={() => handleMute(taskMenu.task, true)}>
+                    🔇 Mute for now
+                  </button>
+                )}
+                {taskMenu.task.muted && (
+                  <button onClick={() => handleMute(taskMenu.task, false)}>
+                    🔔 Unmute
+                  </button>
+                )}
                 <div className="context-divider" />
                 <button
                   onClick={async () => {

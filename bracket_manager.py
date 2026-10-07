@@ -310,6 +310,7 @@ def get_basket_pool(bracket_id: str) -> dict:
 
     # Matching low-energy unscheduled tasks
     from split_task import parse_duration_to_minutes
+    from reschedule import is_muted
 
     tasks = []
     all_files = list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md"))
@@ -321,6 +322,8 @@ def get_basket_pool(bracket_id: str) -> dict:
         if not title or task_status in ("done", "scheduled", "in-progress"):
             continue
         if energy not in ("cantrip", "low"):
+            continue
+        if is_muted(post.metadata):
             continue
         excluded = post.metadata.get("excluded_baskets") or []
         if bracket_id in excluded:
