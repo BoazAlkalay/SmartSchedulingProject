@@ -1227,6 +1227,70 @@
   box-sizing: border-box;
 }
 
+/* Day reveal: badge on a day whose hidden people have something on, and
+   the per-person buttons that appear once that day is revealed. */
+.day-header-people {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+}
+
+.day-people-badge,
+.day-people-revealed {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 0 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.day-people-badge {
+  background: var(--amber-light);
+  border: 1px solid var(--amber);
+  color: var(--ink);
+}
+
+.day-people-revealed {
+  border: none;
+  color: white;
+}
+
+.fc-daygrid-day-number .day-people-badge {
+  margin-right: 4px;
+}
+
+.day-people-popover {
+  min-width: 220px;
+  max-width: 280px;
+  padding-bottom: 6px;
+}
+
+.day-people-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 10px;
+}
+
+.day-people-row .people-chip-dot {
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.day-people-row-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.day-people-row-meta {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
 /* ── Generate Schedule ── */
 .generate-energy-bar {
   display: flex;

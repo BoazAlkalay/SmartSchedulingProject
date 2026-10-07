@@ -77,6 +77,80 @@ function shownPeople() {
   return knownPeople.filter((p) => selectedPeopleSet.has(p));
 }
 
+// ── Day reveal ───────────────────────────────────────────────────────────
+// People who are NOT selected can still be peeked at one day at a time: a
+// day whose hidden people have a "notify" bracket gets a badge, and tapping
+// it reveals every hidden person's brackets for just that day. This map is
+// date ("YYYY-MM-DD") -> Set of names revealed on that date. It is
+// deliberately temporary: kept in memory only, so it resets on reload,
+// unlike the chip selection.
+const revealedByDate = new Map();
+
+const DAY_NAMES = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+function toDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Every other-person bracket that applies on a given date.
+function personBracketsOn(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dayName = DAY_NAMES[new Date(y, m - 1, d).getDay()];
+  return rawBracketsCache.filter(
+    (b) =>
+      b.person && (b.days?.includes(dayName) || b.specific_date === dateStr),
+  );
+}
+
+// Unselected people currently revealed on a date (and who still exist).
+function revealedPeopleOn(dateStr) {
+  const set = revealedByDate.get(dateStr);
+  if (!set) return [];
+  return knownPeople.filter((p) => set.has(p) && !selectedPeopleSet.has(p));
+}
+
+// People to flag on a date: not selected, not already revealed that day,
+// and with at least one bracket that day whose notify toggle is on.
+function flaggedPeopleOn(dateStr) {
+  const revealed = revealedByDate.get(dateStr);
+  const names = new Set(
+    personBracketsOn(dateStr)
+      .filter(
+        (b) =>
+          b.notify &&
+          !selectedPeopleSet.has(b.person) &&
+          !(revealed && revealed.has(b.person)),
+      )
+      .map((b) => b.person),
+  );
+  return knownPeople.filter((p) => names.has(p));
+}
+
+// Ref callback for buttons that live inside the calendar's own cells. The
+// calendar watches pointer-downs on its cells to start a selection (which
+// opens New Bracket) or a date click, and it sees them before React does --
+// so the press has to be stopped on the element itself, natively.
+function keepPressFromCalendar(el) {
+  if (!el) return;
+  for (const type of ["mousedown", "touchstart", "pointerdown"]) {
+    el.addEventListener(type, (e) => e.stopPropagation());
+  }
+}
+
+// Lane order for one day: selected people first (same lanes on every day),
+// then anyone revealed just for that day.
+function lanesOn(dateStr) {
+  return [...shownPeople(), ...revealedPeopleOn(dateStr)];
+}
+
 async function fetchBrackets(dateRange) {
   // include_people: plain /brackets leaves other people's brackets out on
   // purpose (that is what keeps them away from scheduling), so the calendar
@@ -89,17 +163,10 @@ async function fetchBrackets(dateRange) {
 }
 
 // Build calendar events for brackets across a date range. Other people's
-// brackets are only included for people who are currently selected.
+// brackets are only included for people who are currently selected, or who
+// have been revealed for that particular day.
 function bracketsToFCEvents(brackets, dateRange) {
-  const dayNames = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-  ];
+  const dayNames = DAY_NAMES;
   const events = [];
 
   // Generate dates in the current view range
@@ -111,7 +178,16 @@ function bracketsToFCEvents(brackets, dateRange) {
     const dayName = dayNames[d.getDay()];
 
     for (const bracket of brackets) {
-      if (bracket.person && !selectedPeopleSet.has(bracket.person)) continue;
+      const revealedOnly =
+        bracket.person &&
+        !selectedPeopleSet.has(bracket.person) &&
+        revealedByDate.get(dateStr)?.has(bracket.person);
+      if (
+        bracket.person &&
+        !selectedPeopleSet.has(bracket.person) &&
+        !revealedOnly
+      )
+        continue;
 
       const matchesDay = bracket.days?.includes(dayName);
       const matchesDate = bracket.specific_date === dateStr;
@@ -127,10 +203,14 @@ function bracketsToFCEvents(brackets, dateRange) {
             bracket.color === "green"
               ? "rgba(61, 151, 95, 0.55)"
               : "rgba(139, 46, 46, 0.55)",
-          classNames: ["bracket-person"],
+          classNames: revealedOnly
+            ? ["bracket-person", "bracket-person-revealed"]
+            : ["bracket-person"],
           extendedProps: {
             type: "bracket",
             bracket: bracket,
+            dateStr,
+            revealedOnly: Boolean(revealedOnly),
           },
         });
         continue;
@@ -360,15 +440,57 @@ const CalendarGrid = forwardRef(function CalendarGrid(
   ]);
   const shown = people.filter((p) => selectedPeople.includes(p));
 
+  // Day reveal. revealedByDate (module level) holds the data; this counter
+  // only exists to re-render the day headers and gutter when it changes.
+  const [, setRevealVersion] = useState(0);
+  // Dates currently on screen, so the gutter is sized for what's visible.
+  const [visibleRange, setVisibleRange] = useState(null);
+  // Month view can't draw lanes, so its badge opens a list instead.
+  const [dayPeoplePopover, setDayPeoplePopover] = useState(null);
+
+  // Widest any visible day needs: selected people plus that day's reveals.
+  let extraLanes = 0;
+  if (visibleRange) {
+    for (const [dateStr] of revealedByDate) {
+      if (dateStr >= visibleRange.start && dateStr < visibleRange.end) {
+        extraLanes = Math.max(extraLanes, revealedPeopleOn(dateStr).length);
+      }
+    }
+  }
+
   function togglePerson(person) {
     if (selectedPeopleSet.has(person)) selectedPeopleSet.delete(person);
     else selectedPeopleSet.add(person);
     saveSelectedPeople();
     setSelectedPeople([...selectedPeopleSet]);
+    redrawPeople();
+  }
 
+  // Reveal every hidden person who has a bracket on this day (notify on or
+  // off -- once you ask to look, you see everything for that day).
+  function revealDay(dateStr) {
+    const names = personBracketsOn(dateStr)
+      .map((b) => b.person)
+      .filter((p) => !selectedPeopleSet.has(p));
+    revealedByDate.set(dateStr, new Set(names));
+    setRevealVersion((v) => v + 1);
+    redrawPeople();
+  }
+
+  // Hide one revealed person again, for that day only.
+  function hideRevealed(dateStr, person) {
+    const set = revealedByDate.get(dateStr);
+    if (!set) return;
+    set.delete(person);
+    if (set.size === 0) revealedByDate.delete(dateStr);
+    setRevealVersion((v) => v + 1);
+    redrawPeople();
+  }
+
+  function redrawPeople() {
     // Redraw from what's already loaded -- no network. Every person lane is
-    // rebuilt (not just this person's) because lanes close up when someone
-    // is switched off.
+    // rebuilt (not just the one that changed) because lanes close up when
+    // someone is switched off.
     const api = calendarRef.current?.getApi();
     if (!api) return;
     const range = { start: api.view.activeStart, end: api.view.activeEnd };
@@ -498,7 +620,9 @@ const CalendarGrid = forwardRef(function CalendarGrid(
   return (
     <div
       className="calendar-grid"
-      style={{ "--people-gutter": `${shown.length * PERSON_LANE_WIDTH}px` }}
+      style={{
+        "--people-gutter": `${(shown.length + extraLanes) * PERSON_LANE_WIDTH}px`,
+      }}
     >
       {/* ── Date label + color key ── */}
       <div className="calendar-header-row">
@@ -600,6 +724,60 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         </div>
       )}
 
+      {/* ── Month view: list of other people's brackets for one day ── */}
+      {dayPeoplePopover && (
+        <>
+          <div
+            className="context-overlay"
+            onClick={() => setDayPeoplePopover(null)}
+          />
+          <div
+            className="context-menu day-people-popover"
+            style={{ top: dayPeoplePopover.y, left: dayPeoplePopover.x }}
+          >
+            <div className="context-title">
+              {new Date(
+                dayPeoplePopover.dateStr + "T12:00:00",
+              ).toLocaleDateString("default", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              })}
+            </div>
+            {personBracketsOn(dayPeoplePopover.dateStr)
+              .slice()
+              .sort(
+                (a, b) =>
+                  a.person.localeCompare(b.person) ||
+                  a.start_time.localeCompare(b.start_time),
+              )
+              .map((b) => (
+                <div key={b.id} className="day-people-row">
+                  <span
+                    className="people-chip-dot"
+                    style={{ background: personColor(b.person) }}
+                  />
+                  <div>
+                    <div className="day-people-row-name">
+                      {b.person} · {b.name}
+                    </div>
+                    <div className="day-people-row-meta">
+                      {b.start_time}–{b.end_time} ·{" "}
+                      <span
+                        style={{
+                          color: b.color === "green" ? "#3D6B4F" : "#8B2E2E",
+                        }}
+                      >
+                        {b.color === "green" ? "available" : "unavailable"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </>
+      )}
+
       {/* ── FullCalendar ── */}
       <FullCalendar
         ref={calendarRef}
@@ -633,6 +811,83 @@ const CalendarGrid = forwardRef(function CalendarGrid(
         unselectAuto={false}
         droppable={true}
         eventInteractive={true}
+        dayHeaderContent={(arg) => {
+          // Month headers are bare weekday names -- no date to attach to
+          if (arg.view.type === "dayGridMonth") return arg.text;
+          const dateStr = toDateStr(arg.date);
+          const flagged = flaggedPeopleOn(dateStr);
+          const revealed = revealedPeopleOn(dateStr);
+          if (flagged.length === 0 && revealed.length === 0) return arg.text;
+          return (
+            <span className="day-header-people">
+              <span>{arg.text}</span>
+              {flagged.length > 0 && (
+                <button
+                  className="day-people-badge"
+                  title={`${flagged.join(", ")} ${flagged.length === 1 ? "has" : "have"} something this day — tap to show`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    revealDay(dateStr);
+                  }}
+                >
+                  👥 {flagged.length}
+                </button>
+              )}
+              {revealed.map((person) => (
+                <button
+                  key={person}
+                  className="day-people-revealed"
+                  style={{ background: personColor(person) }}
+                  title={`Hide ${person} for this day`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    hideRevealed(dateStr, person);
+                  }}
+                >
+                  {person.slice(0, 1).toUpperCase()} ×
+                </button>
+              ))}
+            </span>
+          );
+        }}
+        dayCellContent={(arg) => {
+          if (arg.view.type !== "dayGridMonth") return arg.dayNumberText;
+          // Month view can't draw lanes, so flag any day where a selected
+          // person, or a hidden one with notify on, has a bracket. Tapping
+          // the badge lists that day's brackets.
+          const dateStr = toDateStr(arg.date);
+          const names = new Set(
+            personBracketsOn(dateStr)
+              .filter((b) => b.notify || selectedPeopleSet.has(b.person))
+              .map((b) => b.person),
+          );
+          return (
+            <>
+              {names.size > 0 && (
+                <button
+                  ref={keepPressFromCalendar}
+                  className="day-people-badge"
+                  title="Other people's brackets this day"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setDayPeoplePopover({
+                      dateStr,
+                      x: Math.max(8, Math.min(r.left, window.innerWidth - 250)),
+                      y: r.bottom + 4,
+                    });
+                  }}
+                >
+                  👥 {names.size}
+                </button>
+              )}
+              <span>{arg.dayNumberText}</span>
+            </>
+          );
+        }}
         datesSet={(info) => {
           // Clear cache so events refetch for new date range
           eventsCache = [];
@@ -640,6 +895,10 @@ const CalendarGrid = forwardRef(function CalendarGrid(
 
           const start = info.start;
           const viewType = info.view.type;
+          setVisibleRange({
+            start: toDateStr(info.start),
+            end: toDateStr(info.end),
+          });
           // Notify parent of current viewed date
           if (onDateChange) {
             const viewedDate = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
@@ -841,7 +1100,8 @@ const CalendarGrid = forwardRef(function CalendarGrid(
             // that events are kept out of (see --people-gutter in App.css),
             // so they stay visible even on a busy day.
             const bracket = info.event.extendedProps.bracket;
-            const lane = Math.max(0, shownPeople().indexOf(bracket.person));
+            const { dateStr, revealedOnly } = info.event.extendedProps;
+            const lane = Math.max(0, lanesOn(dateStr).indexOf(bracket.person));
             const harness = el.parentElement;
             if (harness) {
               harness.style.left = "auto";
@@ -850,7 +1110,8 @@ const CalendarGrid = forwardRef(function CalendarGrid(
             }
             const titleEl = el.querySelector(".fc-event-title");
             if (titleEl) titleEl.style.display = "none";
-            el.style.borderLeft = `4px solid ${personColor(bracket.person)}`;
+            // Dashed edge = revealed for this day only, not selected
+            el.style.borderLeft = `4px ${revealedOnly ? "dashed" : "solid"} ${personColor(bracket.person)}`;
             el.style.pointerEvents = "auto";
             el.title = `${bracket.person} — ${bracket.name} (${
               bracket.color === "green" ? "available" : "unavailable"
