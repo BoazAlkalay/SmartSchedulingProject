@@ -1190,6 +1190,33 @@
   font-size: 12px;
 }
 
+/* The 👥 button: folds the name chips away / brings them back. The ring
+   appears when someone has a bracket on a day currently on screen. */
+.people-chip-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 12px;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.people-chip-toggle.has-people {
+  border-color: var(--amber);
+  background: var(--amber-light);
+}
+
+.people-chip-summary {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
 .people-chip {
   display: inline-flex;
   align-items: center;

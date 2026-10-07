@@ -60,6 +60,48 @@ function saveSelectedPeople() {
   }
 }
 
+// Whether the name chips are folded away behind the 👥 button. Remembered
+// like the selection, since it's a how-I-like-my-screen choice.
+const PEOPLE_COLLAPSED_KEY = "smartscheduler.peopleChipsCollapsed";
+
+function loadChipsCollapsed() {
+  try {
+    return localStorage.getItem(PEOPLE_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveChipsCollapsed(collapsed) {
+  try {
+    localStorage.setItem(PEOPLE_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    // a nicety -- fine without it
+  }
+}
+
+// A fingerprint of everything about other people's brackets that the
+// chips, day badges and 👥 ring are drawn from. Compared after each fetch
+// so those re-render when a bracket changes, and only then.
+function peopleDataKey(brackets) {
+  return brackets
+    .filter((b) => b.person)
+    .map((b) =>
+      [
+        b.id,
+        b.person,
+        b.color,
+        b.notify,
+        (b.days || []).join("+"),
+        b.specific_date,
+        b.start_time,
+        b.end_time,
+        b.name,
+      ].join("~"),
+    )
+    .join("|");
+}
+
 function peopleFrom(brackets) {
   return [
     ...new Set(brackets.filter((b) => b.person).map((b) => b.person)),
@@ -439,6 +481,16 @@ const CalendarGrid = forwardRef(function CalendarGrid(
     ...selectedPeopleSet,
   ]);
   const shown = people.filter((p) => selectedPeople.includes(p));
+  const [chipsCollapsed, setChipsCollapsed] = useState(loadChipsCollapsed);
+  // Changes whenever other people's bracket data changes -- its only job is
+  // to trigger a re-render then (see peopleDataKey).
+  const [, setPeopleKey] = useState("");
+
+  function toggleChips() {
+    const next = !chipsCollapsed;
+    saveChipsCollapsed(next);
+    setChipsCollapsed(next);
+  }
 
   // Day reveal. revealedByDate (module level) holds the data; this counter
   // only exists to re-render the day headers and gutter when it changes.
@@ -454,6 +506,23 @@ const CalendarGrid = forwardRef(function CalendarGrid(
     for (const [dateStr] of revealedByDate) {
       if (dateStr >= visibleRange.start && dateStr < visibleRange.end) {
         extraLanes = Math.max(extraLanes, revealedPeopleOn(dateStr).length);
+      }
+    }
+  }
+
+  // Does anyone at all have a bracket on a day that's currently on screen?
+  // Drives the ring on the 👥 button.
+  let peopleInView = false;
+  if (visibleRange) {
+    const [y, m, d] = visibleRange.start.split("-").map(Number);
+    for (
+      let day = new Date(y, m - 1, d);
+      toDateStr(day) < visibleRange.end;
+      day.setDate(day.getDate() + 1)
+    ) {
+      if (personBracketsOn(toDateStr(day)).length > 0) {
+        peopleInView = true;
+        break;
       }
     }
   }
@@ -693,34 +762,52 @@ const CalendarGrid = forwardRef(function CalendarGrid(
       {/* ── People chips — only when someone else's brackets exist ── */}
       {people.length > 0 && (
         <div className="people-chip-row">
-          <span className="people-chip-label">👥</span>
-          {people.map((person) => {
-            const on = selectedPeople.includes(person);
-            const color = personColor(person);
-            return (
-              <button
-                key={person}
-                className={`people-chip ${on ? "active" : ""}`}
-                style={
-                  on
-                    ? { background: color, borderColor: color }
-                    : { borderColor: color }
-                }
-                onClick={() => togglePerson(person)}
-                title={
-                  on ? `Hide ${person}'s brackets` : `Show ${person}'s brackets`
-                }
-              >
-                {!on && (
-                  <span
-                    className="people-chip-dot"
-                    style={{ background: color }}
-                  />
-                )}
-                {person}
-              </button>
-            );
-          })}
+          {/* Press to fold the names away or bring them back. The ring
+              means someone has a bracket somewhere in the days on screen,
+              so you can tell there's something to look at while folded. */}
+          <button
+            className={`people-chip-toggle ${peopleInView ? "has-people" : ""}`}
+            onClick={toggleChips}
+            title={
+              (chipsCollapsed ? "Show names" : "Hide names") +
+              (peopleInView ? " — someone has a bracket in view" : "")
+            }
+          >
+            👥
+          </button>
+          {chipsCollapsed && shown.length > 0 && (
+            <span className="people-chip-summary">{shown.length} shown</span>
+          )}
+          {!chipsCollapsed &&
+            people.map((person) => {
+              const on = selectedPeople.includes(person);
+              const color = personColor(person);
+              return (
+                <button
+                  key={person}
+                  className={`people-chip ${on ? "active" : ""}`}
+                  style={
+                    on
+                      ? { background: color, borderColor: color }
+                      : { borderColor: color }
+                  }
+                  onClick={() => togglePerson(person)}
+                  title={
+                    on
+                      ? `Hide ${person}'s brackets`
+                      : `Show ${person}'s brackets`
+                  }
+                >
+                  {!on && (
+                    <span
+                      className="people-chip-dot"
+                      style={{ background: color }}
+                    />
+                  )}
+                  {person}
+                </button>
+              );
+            })}
         </div>
       )}
 
@@ -953,6 +1040,8 @@ const CalendarGrid = forwardRef(function CalendarGrid(
           setPeople((prev) =>
             prev.join("|") === knownPeople.join("|") ? prev : knownPeople,
           );
+          // A string, so React skips the re-render when nothing changed.
+          setPeopleKey(peopleDataKey(rawBracketsCache));
           successCallback([...fresh, ...brackets]);
         }}
         eventClick={(info) => {
