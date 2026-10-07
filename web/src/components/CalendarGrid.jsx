@@ -993,8 +993,11 @@ const CalendarGrid = forwardRef(function CalendarGrid(
           }
 
           if (viewType === "dayGridMonth") {
+            // info.start is the first cell in the grid, which usually falls
+            // in the previous month (October's grid starts on Sep 27).
+            // currentStart is the 1st of the month actually being shown.
             setCurrentDateLabel(
-              start.toLocaleString("default", {
+              info.view.currentStart.toLocaleString("default", {
                 month: "long",
                 year: "numeric",
               }),
@@ -1408,6 +1411,14 @@ const CalendarGrid = forwardRef(function CalendarGrid(
           });
         }}
         select={(info) => {
+          // A bracket needs a start and end time. Month view and the all-day
+          // row only select whole days, which opened New Bracket with dates
+          // where the times should be -- and in Month it did so on every
+          // day click, on top of jumping to that day. Ignore those.
+          if (info.allDay) {
+            info.view.calendar.unselect();
+            return;
+          }
           if (onBracketCreate) {
             onBracketCreate({
               start: info.startStr,
