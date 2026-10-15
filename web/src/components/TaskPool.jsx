@@ -458,7 +458,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
 
     if (isDateOnly) {
       // Plan for that date without scheduling a specific time
-      await fetch(`${API}/plan-task`, {
+      const planRes = await fetch(`${API}/plan-task`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -466,6 +466,11 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
           planned_date: input, // backend NLP handles "wednesday", "july 18" etc
         }),
       });
+      if (!planRes.ok) {
+        const data = await planRes.json().catch(() => ({}));
+        alert(data.detail || `Couldn't read "${input}" as a date.`);
+        return;
+      }
     } else {
       // Has a time — schedule it
       const now = new Date();
@@ -540,11 +545,16 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
     );
     if (!date) return;
     setTaskMenu(null);
-    await fetch(`${API}/plan-task`, {
+    const planRes = await fetch(`${API}/plan-task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ task_title: task.title, planned_date: date }),
     });
+    if (!planRes.ok) {
+      const data = await planRes.json().catch(() => ({}));
+      alert(data.detail || `Couldn't read "${date}" as a date.`);
+      return;
+    }
     refreshAll();
   }
 

@@ -451,53 +451,27 @@ def unschedule_task_endpoint(request: UnscheduleTaskRequest):
 @app.post("/plan-task")
 def plan_task_endpoint(request: PlanTaskRequest):
     try:
-        from reschedule import plan_task, parse_retry_time
-        from datetime import datetime
+        from reschedule import plan_task
+        from date_parser import parse_natural_date
 
-        # Parse natural language date
-        raw = request.planned_date.strip().lower()
-
-        # Try direct YYYY-MM-DD first
-        try:
-            datetime.strptime(raw, "%Y-%m-%d")
-            parsed_date = raw
-        except ValueError:
-            # Use natural language parsing
-            now = datetime.now()
-            if raw in ("today", "now"):
-                parsed_date = now.strftime("%Y-%m-%d")
-            elif raw == "tomorrow":
-                from datetime import timedelta
-
-                parsed_date = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-            else:
-                # Handle "this thursday", "next monday" etc
-                day_names = [
-                    "monday",
-                    "tuesday",
-                    "wednesday",
-                    "thursday",
-                    "friday",
-                    "saturday",
-                    "sunday",
-                ]
-                found = None
-                for i, day in enumerate(day_names):
-                    if day in raw:
-                        found = i
-                        break
-                if found is not None:
-                    days_ahead = (found - now.weekday()) % 7
-                    if days_ahead == 0:
-                        days_ahead = 7
-                    from datetime import timedelta
-
-                    parsed_date = (now + timedelta(days=days_ahead)).strftime(
-                        "%Y-%m-%d"
-                    )
-                else:
-                    # Fall back to raw string
-                    parsed_date = raw
+        # This used to have its own inline "today/tomorrow/weekday-name"
+        # parser (a third, independent copy of the same logic retry_later
+        # and date_parser already had), which fell back to saving the raw
+        # unparsed string as parsed_date when nothing matched -- the same
+        # "Invalid Date" bug fixed in retry_later. Reuse the shared
+        # deterministic parser instead, which refuses unparseable input
+        # rather than passing it through.
+        raw = request.planned_date.strip()
+        parsed = parse_natural_date(raw)
+        if parsed is None:
+            raise ValueError(
+                f'Couldn\'t read "{raw}" as a date. Try: today, tomorrow, '
+                f"friday, or 2026-10-20."
+            )
+        # plan_task() is date-only (assigns a day without scheduling a
+        # specific time) -- drop any time component parse_natural_date
+        # may have read (e.g. "friday 3pm").
+        parsed_date = parsed.split("T")[0]
 
         message = plan_task(task_title=request.task_title, planned_date=parsed_date)
         return {"status": "planned", "message": message, "date": parsed_date}
