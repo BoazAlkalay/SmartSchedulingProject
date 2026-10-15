@@ -58,16 +58,21 @@ function deadlineUrgency(deadline, plannedDate, status) {
     return ` by ${hour12}:${String(m).padStart(2, "0")} ${period}`;
   };
 
+  // A lapsed OR due-today deadline isn't a false alarm if there's an
+  // active plan for it right now — in progress, or planned for today or
+  // later. Only a task with no current plan at all (still just sitting
+  // unscheduled) is genuinely forgotten and worth flagging. Keep `days`
+  // either way so sorting still bubbles it to the top of its section —
+  // just don't show the alarming label for the has-a-plan case. This
+  // covers both retrying/deferring a today-deadline task to a later
+  // planned_date, and extending an in-progress task past a same-day
+  // deadline — neither should flash amber/overdue the instant that
+  // happens, without needing to rewrite the deadline itself.
+  const hasCurrentPlan =
+    status === "in-progress" ||
+    (plannedDate && plannedDate !== "None" && plannedDate >= todayStr);
+
   if (days < 0) {
-    // A lapsed deadline isn't a false alarm if there's an active plan for
-    // it right now — in progress, or planned for today or later. Only a
-    // task with no current plan at all (still just sitting unscheduled) is
-    // genuinely forgotten and worth flagging. Keep `days` either way so
-    // sorting still bubbles it to the top of its section — just don't
-    // show the alarming label for the has-a-plan case.
-    const hasCurrentPlan =
-      status === "in-progress" ||
-      (plannedDate && plannedDate !== "None" && plannedDate >= todayStr);
     if (hasCurrentPlan) {
       return { label: null, color: "#8B2E2E", days };
     }
@@ -75,8 +80,12 @@ function deadlineUrgency(deadline, plannedDate, status) {
     // doesn't clash with the Overdue section's name.
     return { label: `${-days}d late`, color: "#8B2E2E", days };
   }
-  if (days === 0)
+  if (days === 0) {
+    if (hasCurrentPlan) {
+      return { label: null, color: "#C4832A", days };
+    }
     return { label: `Due today${formatTime()}`, color: "#C4832A", days };
+  }
   if (days === 1)
     return { label: `Due tomorrow${formatTime()}`, color: "#D4A843", days };
   if (days <= 3)

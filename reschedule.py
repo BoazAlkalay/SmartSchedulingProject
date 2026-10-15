@@ -366,8 +366,30 @@ def retry_later(
     energy: str = "unknown",
     auto_reschedule: bool = True,
 ) -> str:
-    retry_time = parse_retry_time(retry_time)
-    retry_date = retry_time.split(" ")[0] if retry_time else None
+    # parse_retry_time()'s own regex requires a digit (a time) to match at
+    # all -- bare date phrases like "tomorrow" or "friday" have none, so it
+    # fell through its "can't parse, pass through as-is" branch and the
+    # literal word got saved into planned_date/retry_at, which the frontend
+    # then can't render as a date at all ("Invalid Date"). Reuse the shared
+    # deterministic date parser instead -- same one date_parser already
+    # uses for deadlines and /parse-date -- which handles date-only and
+    # date+time alike, and returns None (an explicit refusal) instead of
+    # ever passing through unparseable text.
+    from date_parser import parse_natural_date
+
+    parsed = parse_natural_date(retry_time)
+    if parsed is None:
+        raise ValueError(
+            f"Couldn't read \"{retry_time}\" as a date/time. Try: tomorrow, "
+            f'tomorrow 9am, friday, friday 5pm, or 2026-10-20.'
+        )
+
+    has_time = "T" in parsed
+    retry_date = parsed.split("T")[0]
+    # Keep the rest of this function's existing "YYYY-MM-DD HH:MM" shape
+    # when a time was given; date-only skips straight to just moving the
+    # day (no time to auto-reschedule against).
+    retry_time = parsed.replace("T", " ") if has_time else retry_date
 
     filepath = find_task_file(task_title)
 
@@ -393,6 +415,20 @@ def retry_later(
             "planned_date": retry_date,
         }
         update_task_file(filepath, updates)
+
+        if not has_time:
+            # Date only, e.g. "tomorrow" with no time -- nothing to
+            # auto-reschedule against. Just move the day and stop; the
+            # task stays unscheduled for that date like any other planned
+            # task, to be scheduled normally later.
+            message = f"'{task_title}' moved to {retry_date} (no specific time given, so it's unscheduled for that day)."
+            print(message)
+            create_checkin(
+                doing=f"retry scheduled: {task_title}",
+                energy=energy,
+                notes=f"retry at {retry_date}. {retry_note}",
+            )
+            return message
 
         # Auto-reschedule with conflict detection
         if auto_reschedule and retry_time:

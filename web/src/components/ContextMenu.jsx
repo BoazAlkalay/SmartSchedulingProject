@@ -25,6 +25,7 @@ export default function ContextMenu({
   const [completedAtClock, setCompletedAtClock] = React.useState("");
   const [completedAtHours, setCompletedAtHours] = React.useState("");
   const [completedAtMinutes, setCompletedAtMinutes] = React.useState("");
+  const [error, setError] = React.useState("");
 
   const menuRef = React.useRef(null);
   const [menuStyle, setMenuStyle] = React.useState({});
@@ -45,6 +46,11 @@ export default function ContextMenu({
 
     setMenuStyle({ top, left });
   }, [x, y, view]);
+
+  function changeView(next) {
+    setError("");
+    setView(next);
+  }
 
   if (!event) return null;
 
@@ -122,14 +128,30 @@ export default function ContextMenu({
   async function handleRetry() {
     if (!retryTime.trim()) return;
     setSubmitting(true);
-    await fetch(`${API}/retry`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        task_title: title,
-        retry_time: retryTime,
-      }),
-    });
+    setError("");
+    try {
+      const res = await fetch(`${API}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_title: title,
+          retry_time: retryTime,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(
+          data.detail ||
+            `Couldn't read "${retryTime}" as a date/time. Try: tomorrow, tomorrow 9am, friday, or friday 5pm.`,
+        );
+        setSubmitting(false);
+        return;
+      }
+    } catch {
+      setError("Couldn't reach the server — try again.");
+      setSubmitting(false);
+      return;
+    }
     onClose();
     onRefresh();
   }
@@ -191,7 +213,7 @@ export default function ContextMenu({
               🕐 Completed At/In
             </button>
             <button onClick={() => setView("stopping")}>⏸ Stopping Now</button>
-            <button onClick={() => setView("retry")}>↩ Retry Later</button>
+            <button onClick={() => changeView("retry")}>↩ Retry Later</button>
             <button onClick={handleUnschedule}>📋 Unschedule</button>
             {isMobile && (
               <button onClick={() => setView("extend")}>⏱ Extend</button>
@@ -397,8 +419,11 @@ export default function ContextMenu({
                 autoFocus
               />
             </div>
+            {error && (
+              <p style={{ color: "var(--red)", fontSize: "13px" }}>{error}</p>
+            )}
             <div className="context-form-buttons">
-              <button className="btn-ghost" onClick={() => setView("main")}>
+              <button className="btn-ghost" onClick={() => changeView("main")}>
                 ← Back
               </button>
               <button
