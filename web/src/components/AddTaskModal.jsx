@@ -374,6 +374,12 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
   // deadline and parsed_datetime carry a time; planned_date is date-only.
   const DATE_FIELD_WITH_TIME = { deadline: true, parsed_datetime: true, planned_date: false };
 
+  function todayStr() {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  }
+
   function openEdit(field) {
     const raw = parsed[field];
     if (raw && raw.includes("T")) {
@@ -384,10 +390,12 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
       setEditDateVal(raw || "");
       setEditTimeVal("");
     }
+    setError("");
     setEditingField(field);
   }
 
   function cancelEdit() {
+    setError("");
     setEditingField(null);
   }
 
@@ -396,6 +404,29 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
       cancelEdit();
       return;
     }
+    // The date input's min/max attributes are only a hint -- several
+    // mobile browsers (notably iOS Safari's wheel picker) let you pick
+    // outside that range without greying anything out or blocking the
+    // value, so this is the actual enforcement. On a reject, the editor
+    // stays open (no setEditingField(null)) so the date can be fixed
+    // instead of silently discarding the edit.
+    if (field === "planned_date") {
+      const today = todayStr();
+      if (editDateVal < today) {
+        setError(`Planned for can't be in the past — pick ${formatDateOnly(today)} or later.`);
+        return;
+      }
+      if (parsed.deadline) {
+        const deadlineDate = parsed.deadline.split("T")[0];
+        if (editDateVal > deadlineDate) {
+          setError(
+            `Planned for can't be after the deadline (${formatDateOnly(deadlineDate)}).`,
+          );
+          return;
+        }
+      }
+    }
+    setError("");
     const value =
       DATE_FIELD_WITH_TIME[field] && editTimeVal
         ? `${editDateVal}T${editTimeVal}`
