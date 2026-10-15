@@ -9,6 +9,46 @@ const STEPS = {
   DONE: "done",
 };
 
+// Preview-row fields editable with a plain text or select input (the
+// date-based ones -- deadline, planned_date -- have their own editor
+// above since they need a date/time picker instead).
+const SIMPLE_FIELDS = {
+  title: { type: "text", placeholder: "Task title" },
+  duration_estimated: {
+    type: "text",
+    placeholder: "e.g. 45min, 2hr",
+    allowEmpty: true,
+  },
+  priority: {
+    type: "select",
+    options: ["low", "medium", "high", "critical"],
+  },
+  energy_required: {
+    type: "select",
+    options: ["cantrip", "low", "medium", "high", "deep"],
+  },
+  folder: { type: "text", placeholder: "e.g. tasks/work/deep-work" },
+  tags: {
+    type: "text",
+    isList: true,
+    placeholder: "comma, separated, tags",
+    allowEmpty: true,
+    allowClear: true,
+  },
+  recurrence: {
+    type: "text",
+    placeholder: "e.g. every week (blank = none)",
+    allowEmpty: true,
+    allowClear: true,
+  },
+  notes: {
+    type: "textarea",
+    placeholder: "Any extra context or details...",
+    allowEmpty: true,
+    allowClear: true,
+  },
+};
+
 export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
   const [step, setStep] = React.useState(STEPS.INPUT);
   const [text, setText] = React.useState(initialText);
@@ -18,8 +58,19 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
   const [error, setError] = React.useState("");
   const [result, setResult] = React.useState("");
   const [showScheduleAt, setShowScheduleAt] = React.useState(false);
-  const [scheduleAtTime, setScheduleAtTime] = React.useState("");
+  // Free-text, natural-language date+time ("friday 6pm", "tomorrow 9am",
+  // or the machine-format prefill below) -- resolved through /parse-date
+  // on submit, so both the date AND the time can be changed here, not
+  // just the time.
+  const [scheduleAtInput, setScheduleAtInput] = React.useState("");
   const [parsedTasks, setParsedTasks] = React.useState(null);
+  // Which preview field is being edited inline right now: "deadline",
+  // "planned_date", one of SIMPLE_FIELDS's keys, or null when nothing is
+  // open.
+  const [editingField, setEditingField] = React.useState(null);
+  const [editDateVal, setEditDateVal] = React.useState("");
+  const [editTimeVal, setEditTimeVal] = React.useState("");
+  const [editSimpleVal, setEditSimpleVal] = React.useState("");
 
   async function handleParse() {
     if (!text.trim()) return;
@@ -113,31 +164,50 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
       }
     } else if (scheduleMode === "schedule-at") {
       const duration = parseDurationToMinutes(parsed.duration_estimated);
-      // Any of deadline, parsed_datetime or planned_date may carry the
-      // intended date here -- a task like "dinner with friends at 6pm"
-      // has no deadline at all (deadline is null on purpose; see
-      // task_entry.py's reclassification), so the date lives in
-      // parsed_datetime or planned_date instead. Falling back to
-      // "today" whenever deadline happened to be empty is exactly what
-      // silently mis-scheduled this kind of task before.
-      const schedulingDate =
-        (parsed.deadline && parsed.deadline.split("T")[0]) ||
-        (parsed.parsed_datetime && parsed.parsed_datetime.split("T")[0]) ||
-        parsed.planned_date ||
-        null;
+      // scheduleAtInput is natural language covering BOTH the date and
+      // the time ("friday 6pm", "tomorrow 9am", or the exact machine
+      // string this form was pre-filled with) -- resolved through the
+      // same deterministic date_parser.py that Change Deadline uses, so
+      // editing the date here (not just the time) actually works,
+      // instead of silently staying on whatever date the parsed preview
+      // happened to compute.
+      let parseRes;
+      try {
+        parseRes = await fetch(`${API}/parse-date`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: scheduleAtInput }),
+        });
+      } catch {
+        setError("Could not reach server.");
+        setLoading(false);
+        return;
+      }
+      const parseData = await parseRes.json();
+      if (parseData.status !== "parsed") {
+        setError(parseData.message || `Couldn't understand "${scheduleAtInput}".`);
+        setLoading(false);
+        return;
+      }
+      if (!parseData.value.includes("T")) {
+        setError(
+          `"${scheduleAtInput}" has a date but no time — try e.g. "friday 6pm".`,
+        );
+        setLoading(false);
+        return;
+      }
+      const [schedulingDate, schedulingTime] = parseData.value.split("T");
       await fetch(`${API}/schedule-task`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task_title: exactTitle,
           duration_minutes: duration,
-          preferred_start: scheduleAtTime,
+          preferred_start: schedulingTime,
           preferred_date: schedulingDate,
         }),
       });
-      setResult(
-        `Scheduled for ${scheduleAtTime}${schedulingDate ? ` on ${schedulingDate}` : ""}`,
-      );
+      setResult(`Scheduled for ${schedulingTime} on ${schedulingDate}`);
     } else if (scheduleMode === "now") {
       const now = new Date();
       const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -156,7 +226,15 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
       });
       setResult(`Scheduled now until ${getEndTime(now, duration)}`);
     } else {
-      setResult("Added to unscheduled.");
+      // A planned_date (own or mirrored from suggested_schedule_date by
+      // create_task_file) means this isn't really "unscheduled" -- it
+      // already has a day, just no specific time slot yet.
+      const effectivePlanned = parsed.planned_date || parsed.suggested_schedule_date;
+      setResult(
+        effectivePlanned
+          ? `Planned for ${formatDateOnly(effectivePlanned)}.`
+          : "Added to unscheduled.",
+      );
     }
 
     setStep(STEPS.DONE);
@@ -237,6 +315,278 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
       : formatDateOnly(deadline);
   }
 
+  // Mirrors _compute_suggested_start in task_entry.py so an inline edit
+  // to the deadline updates "Suggested start" immediately instead of
+  // showing a stale value from the original parse until the task is
+  // actually created.
+  function recomputeSuggestedStart(task) {
+    const deadline = task.deadline;
+    if (!deadline || !deadline.includes("T")) {
+      return {
+        ...task,
+        suggested_start_time: null,
+        suggested_start_feasible: null,
+        minutes_late_if_now: null,
+      };
+    }
+    const deadlineDt = new Date(deadline);
+    if (isNaN(deadlineDt.getTime())) {
+      return {
+        ...task,
+        suggested_start_time: null,
+        suggested_start_feasible: null,
+        minutes_late_if_now: null,
+      };
+    }
+    const durationMinutes = parseDurationToMinutes(task.duration_estimated);
+    const bufferMinutes = Number(task.deadline_buffer_minutes) || 0;
+    const totalMinutes = durationMinutes + bufferMinutes;
+    const suggestedStartDt = new Date(
+      deadlineDt.getTime() - totalMinutes * 60000,
+    );
+    const pad = (n) => String(n).padStart(2, "0");
+    const suggestedStartStr =
+      `${suggestedStartDt.getFullYear()}-${pad(suggestedStartDt.getMonth() + 1)}-` +
+      `${pad(suggestedStartDt.getDate())}T${pad(suggestedStartDt.getHours())}:${pad(suggestedStartDt.getMinutes())}`;
+
+    const now = new Date();
+    if (suggestedStartDt < now) {
+      const finishIfNow = new Date(now.getTime() + totalMinutes * 60000);
+      const minutesLate = Math.max(
+        0,
+        Math.round((finishIfNow - deadlineDt) / 60000),
+      );
+      return {
+        ...task,
+        suggested_start_time: suggestedStartStr,
+        suggested_start_feasible: false,
+        minutes_late_if_now: minutesLate,
+      };
+    }
+    return {
+      ...task,
+      suggested_start_time: suggestedStartStr,
+      suggested_start_feasible: true,
+      minutes_late_if_now: null,
+    };
+  }
+
+  // deadline and parsed_datetime carry a time; planned_date is date-only.
+  const DATE_FIELD_WITH_TIME = { deadline: true, parsed_datetime: true, planned_date: false };
+
+  function openEdit(field) {
+    const raw = parsed[field];
+    if (raw && raw.includes("T")) {
+      const [d, t] = raw.split("T");
+      setEditDateVal(d);
+      setEditTimeVal(t.slice(0, 5));
+    } else {
+      setEditDateVal(raw || "");
+      setEditTimeVal("");
+    }
+    setEditingField(field);
+  }
+
+  function cancelEdit() {
+    setEditingField(null);
+  }
+
+  function saveEdit(field) {
+    if (!editDateVal) {
+      cancelEdit();
+      return;
+    }
+    const value =
+      DATE_FIELD_WITH_TIME[field] && editTimeVal
+        ? `${editDateVal}T${editTimeVal}`
+        : editDateVal;
+    setParsed((prev) => {
+      const updated = { ...prev, [field]: value };
+      return field === "deadline" ? recomputeSuggestedStart(updated) : updated;
+    });
+    setEditingField(null);
+  }
+
+  function clearField(field) {
+    setParsed((prev) => {
+      const updated = { ...prev, [field]: null };
+      return field === "deadline" ? recomputeSuggestedStart(updated) : updated;
+    });
+    setEditingField(null);
+  }
+
+  // --- Simple text/select fields (title, duration, priority, energy,
+  // folder, tags, recurrence) -- same click-to-edit pattern as the date
+  // fields above, driven by the SIMPLE_FIELDS config instead of one
+  // hand-written editor per field. ---
+
+  function openSimpleEdit(field) {
+    const cfg = SIMPLE_FIELDS[field];
+    let raw = parsed[field];
+    raw = cfg.isList ? (Array.isArray(raw) ? raw.join(", ") : "") : raw ?? "";
+    setEditSimpleVal(raw);
+    setEditingField(field);
+  }
+
+  function saveSimpleEdit(field) {
+    const cfg = SIMPLE_FIELDS[field];
+    const trimmed = editSimpleVal.trim();
+    if (!trimmed && !cfg.allowEmpty) {
+      cancelEdit(); // blank isn't valid for this field -- discard, don't save garbage
+      return;
+    }
+    const value = cfg.isList
+      ? trimmed
+        ? trimmed
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : []
+      : trimmed || null;
+    setParsed((prev) => ({ ...prev, [field]: value }));
+    setEditingField(null);
+  }
+
+  function clearSimpleEdit(field) {
+    const cfg = SIMPLE_FIELDS[field];
+    setParsed((prev) => ({ ...prev, [field]: cfg.isList ? [] : null }));
+    setEditingField(null);
+  }
+
+  function renderEditableValue(field, displayValue) {
+    const cfg = SIMPLE_FIELDS[field];
+    if (editingField === field) {
+      const stacked = cfg.type === "textarea";
+      return (
+        <div className={stacked ? "inline-edit inline-edit-stacked" : "inline-edit"}>
+          {cfg.type === "select" ? (
+            <select
+              value={editSimpleVal}
+              onChange={(e) => setEditSimpleVal(e.target.value)}
+              autoFocus
+            >
+              {cfg.options.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          ) : cfg.type === "textarea" ? (
+            <textarea
+              value={editSimpleVal}
+              placeholder={cfg.placeholder}
+              onChange={(e) => setEditSimpleVal(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter adds a newline here instead of submitting --
+                // only Escape gets a shortcut; Save is an explicit click.
+                if (e.key === "Escape") cancelEdit();
+              }}
+              rows={3}
+              autoFocus
+            />
+          ) : (
+            <input
+              type="text"
+              value={editSimpleVal}
+              placeholder={cfg.placeholder}
+              onChange={(e) => setEditSimpleVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveSimpleEdit(field);
+                if (e.key === "Escape") cancelEdit();
+              }}
+              autoFocus
+            />
+          )}
+          <div className="inline-edit-buttons">
+            <button
+              className="btn-ghost btn-xs"
+              onClick={() => saveSimpleEdit(field)}
+            >
+              Save
+            </button>
+            {cfg.allowClear && (
+              <button
+                className="btn-ghost btn-xs"
+                onClick={() => clearSimpleEdit(field)}
+              >
+                Clear
+              </button>
+            )}
+            <button className="btn-ghost btn-xs" onClick={cancelEdit}>
+              ✕
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <button
+        type="button"
+        className="preview-value preview-value-editable"
+        onClick={() => openSimpleEdit(field)}
+        title="Click to change"
+      >
+        {displayValue}
+      </button>
+    );
+  }
+
+  // Shared editor for the three date-bearing fields (deadline,
+  // planned_date, parsed_datetime) -- withTime controls whether a time
+  // input is shown alongside the date picker.
+  function renderDateEditable(field, withTime, displayValue, valueStyle) {
+    if (editingField === field) {
+      return (
+        <div className="inline-edit">
+          <input
+            type="date"
+            value={editDateVal}
+            onChange={(e) => setEditDateVal(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveEdit(field);
+              if (e.key === "Escape") cancelEdit();
+            }}
+            autoFocus
+          />
+          {withTime && (
+            <input
+              type="time"
+              value={editTimeVal}
+              onChange={(e) => setEditTimeVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveEdit(field);
+                if (e.key === "Escape") cancelEdit();
+              }}
+            />
+          )}
+          <button className="btn-ghost btn-xs" onClick={() => saveEdit(field)}>
+            Save
+          </button>
+          <button
+            className="btn-ghost btn-xs"
+            onClick={() => clearField(field)}
+          >
+            Clear
+          </button>
+          <button className="btn-ghost btn-xs" onClick={cancelEdit}>
+            ✕
+          </button>
+        </div>
+      );
+    }
+    return (
+      <button
+        type="button"
+        className="preview-value preview-value-editable"
+        onClick={() => openEdit(field)}
+        title="Click to change"
+        style={valueStyle}
+      >
+        {displayValue}
+      </button>
+    );
+  }
+
   return (
     <>
       <div className="modal-overlay" onClick={onClose} />
@@ -300,41 +650,44 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
               <div className="task-preview">
                 <div className="preview-row">
                   <span className="preview-label">Title</span>
-                  <span className="preview-value">{parsed.title}</span>
+                  {renderEditableValue("title", parsed.title)}
                 </div>
                 <div className="preview-row">
                   <span className="preview-label">Duration</span>
-                  <span className="preview-value">
-                    {parsed.duration_estimated}
-                  </span>
+                  {renderEditableValue(
+                    "duration_estimated",
+                    parsed.duration_estimated || "none",
+                  )}
                 </div>
                 <div className="preview-row">
                   <span className="preview-label">Energy</span>
-                  <span className="preview-value">
-                    {parsed.energy_required}
-                  </span>
+                  {renderEditableValue("energy_required", parsed.energy_required)}
                 </div>
                 <div className="preview-row">
                   <span className="preview-label">Priority</span>
-                  <span className="preview-value">{parsed.priority}</span>
+                  {renderEditableValue("priority", parsed.priority)}
                 </div>
                 <div className="preview-row">
                   <span className="preview-label">Due by</span>
-                  <span className="preview-value">
-                    {formatDeadline(parsed.deadline)}
-                  </span>
+                  {renderDateEditable(
+                    "deadline",
+                    true,
+                    formatDeadline(parsed.deadline),
+                  )}
                 </div>
                 <div className="preview-row">
                   <span className="preview-label">Planned for</span>
-                  <span className="preview-value">
-                    {parsed.planned_date
+                  {renderDateEditable(
+                    "planned_date",
+                    false,
+                    parsed.planned_date
                       ? formatDateOnly(parsed.planned_date)
                       : parsed.suggested_schedule_date
                         ? `${formatDateOnly(parsed.suggested_schedule_date)} (suggested)`
                         : parsed.deadline
                           ? `${formatDateOnly(parsed.deadline.split("T")[0])} (same as deadline)`
-                          : "not yet placed"}
-                  </span>
+                          : "not yet placed",
+                  )}
                 </div>
                 {parsed.suggested_start_time && (
                   <div className="preview-row">
@@ -360,33 +713,41 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
                 )}
                 <div className="preview-row">
                   <span className="preview-label">Folder</span>
-                  <span className="preview-value">{parsed.folder}</span>
+                  {renderEditableValue("folder", parsed.folder || "none")}
                 </div>
-                {parsed.tags?.length > 0 && (
-                  <div className="preview-row">
-                    <span className="preview-label">Tags</span>
-                    <span className="preview-value">
-                      {parsed.tags.join(", ")}
-                    </span>
-                  </div>
-                )}
-                {parsed.recurrence && (
-                  <div className="preview-row">
-                    <span className="preview-label">Recurrence</span>
-                    <span className="preview-value">{parsed.recurrence}</span>
-                  </div>
-                )}
-                {parsed.parsed_datetime && (
-                  <div className="preview-row">
-                    <span className="preview-label">Requested time</span>
-                    <span
-                      className="preview-value"
-                      style={{ color: "var(--green)" }}
-                    >
-                      {formatDateTime(parsed.parsed_datetime)}
-                    </span>
-                  </div>
-                )}
+                <div className="preview-row">
+                  <span className="preview-label">Tags</span>
+                  {renderEditableValue(
+                    "tags",
+                    parsed.tags?.length > 0 ? parsed.tags.join(", ") : "none",
+                  )}
+                </div>
+                <div className="preview-row">
+                  <span className="preview-label">Recurrence</span>
+                  {renderEditableValue("recurrence", parsed.recurrence || "none")}
+                </div>
+                <div className="preview-row">
+                  <span className="preview-label">Notes</span>
+                  {renderEditableValue(
+                    "notes",
+                    parsed.notes
+                      ? parsed.notes.length > 60
+                        ? `${parsed.notes.slice(0, 60)}…`
+                        : parsed.notes
+                      : "none",
+                  )}
+                </div>
+                <div className="preview-row">
+                  <span className="preview-label">Requested time</span>
+                  {renderDateEditable(
+                    "parsed_datetime",
+                    true,
+                    parsed.parsed_datetime
+                      ? formatDateTime(parsed.parsed_datetime)
+                      : "none",
+                    parsed.parsed_datetime ? { color: "var(--green)" } : undefined,
+                  )}
+                </div>
               </div>
 
               {error && (
@@ -397,12 +758,12 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
               {showScheduleAt && (
                 <div className="schedule-at-form">
                   <div className="form-field">
-                    <label>When?</label>
+                    <label>When? (date and time)</label>
                     <input
                       type="text"
-                      placeholder="e.g. 7:35 PM, 2pm friday, tomorrow 9am"
-                      value={scheduleAtTime}
-                      onChange={(e) => setScheduleAtTime(e.target.value)}
+                      placeholder="e.g. friday 6pm, tomorrow 9am, oct 25 2pm"
+                      value={scheduleAtInput}
+                      onChange={(e) => setScheduleAtInput(e.target.value)}
                       autoFocus
                       onKeyDown={(e) => {
                         if (e.key === "Enter") handleAdd("schedule-at");
@@ -419,7 +780,7 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
                     <button
                       className="btn-primary"
                       onClick={() => handleAdd("schedule-at")}
-                      disabled={loading || !scheduleAtTime.trim()}
+                      disabled={loading || !scheduleAtInput.trim()}
                     >
                       {loading ? "..." : "Schedule"}
                     </button>
@@ -434,7 +795,9 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
                     onClick={() => handleAdd("backlog")}
                     disabled={loading}
                   >
-                    Add to Unscheduled
+                    {parsed.planned_date || parsed.suggested_schedule_date
+                      ? "Add as Planned"
+                      : "Add to Unscheduled"}
                   </button>
                   <button
                     className="btn-ghost"
@@ -458,12 +821,16 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
                         dt = new Date(parsed.parsed_datetime);
                       }
                       if (dt) {
-                        const hours = String(dt.getHours()).padStart(2, "0");
-                        const minutes = String(dt.getMinutes()).padStart(
-                          2,
-                          "0",
+                        // Machine-format date+time ("2026-10-25 18:00") --
+                        // round-trips exactly through /parse-date's
+                        // exact-ISO fast path, but is still plain text the
+                        // user can edit into "tomorrow 9am" or similar.
+                        const pad = (n) => String(n).padStart(2, "0");
+                        setScheduleAtInput(
+                          `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`,
                         );
-                        setScheduleAtTime(`${hours}:${minutes}`);
+                      } else {
+                        setScheduleAtInput("");
                       }
                       setShowScheduleAt(true);
                     }}

@@ -89,6 +89,8 @@ When the user says "next Monday" the deadline is exactly {next_weekdays["monday"
 
 The exact same resolution applies to planned_date (the day the person intends to work on or do the task, as distinct from when it's due) whenever a relative day word implies one: "today" resolves to exactly {today}, "tomorrow" resolves to exactly {(effective_now + timedelta(days=1)).strftime("%Y-%m-%d")}, and a weekday name like "this Friday" or "next Monday" resolves to its date from the same anchors used for deadline above (e.g. Friday is exactly {next_weekdays["friday"]}). Both deadline and planned_date must always be either an actual YYYY-MM-DD date (with optional THH:MM for deadline) or null — NEVER the literal relative word itself ("today", "tomorrow", "friday", "next week", etc.). Resolve it to a real date before writing it into either field.
 
+A WINDOW of days ("within 3 days", "within the next week", "sometime in the next 5 days", "in the next few days") is NOT the same as naming a specific day — it only constrains the deadline, the far end of the window. Do NOT set planned_date to that same end date just because it's the only date mentioned; leave planned_date null unless the person separately names an actual working day ("within 3 days, I'll do it Tuesday" → deadline is 3 days out, planned_date is Tuesday). Setting planned_date to the deadline's own date for a window phrase pins the task to the last possible day instead of leaving it free to be scheduled any time before then.
+
 If the user mentions a specific time they want to DO the task AT (e.g. "at 3pm", "tonight at 8", "tomorrow morning at 9"), extract it as parsed_datetime in ISO format combining the resolved date and time. This is a scheduling request, not a deadline.
 
 If the user mentions a specific time the task is due BY (e.g. "by 3pm", "before my 2pm meeting", "due at noon", "before 3:00pm"), include that time in the deadline field using YYYY-MM-DDTHH:MM (24-hour format), e.g. "2026-07-26T15:00". Do NOT put a "due by" time into parsed_datetime — that field is only for explicit "at X" requests. If no specific time is mentioned at all, use YYYY-MM-DD only for deadline.
@@ -179,6 +181,48 @@ def _reclassify_ambiguous_deadline_as_start(task_data: dict, raw_text: str) -> N
     task_data["deadline_buffer_minutes"] = None
 
 
+_WINDOW_PHRASE_RE = re.compile(
+    r"\bwithin\s+(the\s+)?next\s+\d+\s+days?\b"
+    r"|\bwithin\s+\d+\s+days?\b"
+    r"|\bover\s+the\s+next\s+\d+\s+days?\b"
+    r"|\bin\s+the\s+next\s+\d+\s+days?\b"
+    r"|\bin\s+the\s+next\s+(few|couple(\s+of)?)\s+days\b"
+    r"|\bsometime\s+(in|within)\s+(the\s+)?next\s+\d+\s+days?\b"
+    r"|\bsometime\s+this\s+week\b"
+    r"|\bwithin\s+(the\s+next\s+)?(a\s+)?week\b"
+    r"|\bin\s+the\s+next\s+week\b"
+    r"|\bover\s+the\s+next\s+(few\s+)?weeks?\b",
+    re.IGNORECASE,
+)
+
+
+def _loosen_window_deadline(task_data: dict, raw_text: str) -> None:
+    """
+    "this task should be done within the next 3 days" states a deadline
+    window, not a specific work day. But the prompt tells the LLM to
+    mirror deadline into planned_date "whenever a relative day word
+    implies one", and in practice it does that even for window language
+    with no specific day named — pinning the task to exactly day 3
+    instead of leaving it free for the scheduler to place anywhere up to
+    the deadline, which defeats the point of giving a window at all.
+
+    If the raw input uses window language ("within N days", "in the
+    next few days", "sometime this week", etc.) rather than naming a
+    specific day, and planned_date landed on the exact same date as the
+    deadline, clear planned_date so only the deadline drives scheduling.
+    """
+    if not _WINDOW_PHRASE_RE.search(raw_text or ""):
+        return
+
+    deadline = task_data.get("deadline")
+    planned_date = task_data.get("planned_date")
+    if not deadline or not planned_date:
+        return
+
+    if planned_date == str(deadline).split("T")[0]:
+        task_data["planned_date"] = None
+
+
 def _compute_suggested_start(task_data: dict, now: datetime) -> None:
     """
     If the task has a deadline with a time component, back-calculate a
@@ -253,6 +297,7 @@ def parse_task_from_text(raw_text: str) -> dict:
 
     for t in tasks:
         _reclassify_ambiguous_deadline_as_start(t, raw_text)
+        _loosen_window_deadline(t, raw_text)
         _compute_suggested_start(t, now)
 
     return tasks[0] if len(tasks) == 1 else tasks

@@ -179,6 +179,10 @@ class SetDeadlineRequest(BaseModel):
     deadline: Optional[str] = None  # None/empty = remove deadline
 
 
+class ParseDateRequest(BaseModel):
+    text: str
+
+
 class UnplanRequest(BaseModel):
     task_title: str
 
@@ -1482,6 +1486,38 @@ def set_deadline_endpoint(request: SetDeadlineRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/parse-date")
+def parse_date_endpoint(request: ParseDateRequest):
+    """
+    Resolve free-text natural language ("tomorrow 9am", "friday 6pm",
+    "oct 25") into a real date or date+time, with no side effects --
+    unlike /set-deadline, this doesn't look up or write to any task file.
+    Used by the Add Task modal's "Schedule At" box so typing a new date
+    there (not just a new time) actually changes what gets scheduled,
+    through the same deterministic parser as Change Deadline.
+    """
+    from date_parser import parse_natural_date
+
+    text = (request.text or "").strip()
+    if not text:
+        return {
+            "status": "unparsed",
+            "message": "Enter a date and time, e.g. \"friday 6pm\" or \"tomorrow 9am\".",
+        }
+
+    parsed = parse_natural_date(text)
+    if parsed is None:
+        return {
+            "status": "unparsed",
+            "message": (
+                f'Couldn\'t read "{text}" as a date/time. Try: today 6pm, '
+                "tomorrow 9am, friday 5pm, oct 12 2pm, or 2026-10-12 18:00."
+            ),
+        }
+
+    return {"status": "parsed", "value": parsed}
 
 
 @app.post("/unplan-task")
