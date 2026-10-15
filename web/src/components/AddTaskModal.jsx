@@ -536,11 +536,26 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
   // input is shown alongside the date picker.
   function renderDateEditable(field, withTime, displayValue, valueStyle) {
     if (editingField === field) {
+      // planned_date is the one case where there's a real window to
+      // constrain to: no earlier than today, no later than the
+      // deadline (if one is set). The browser's own date picker greys
+      // out everything outside [min, max] -- cheaper and more
+      // discoverable than a custom calendar, and it's exactly the
+      // "reasonable to schedule" range.
+      let min, max;
+      if (field === "planned_date") {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, "0");
+        min = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        if (parsed.deadline) max = parsed.deadline.split("T")[0];
+      }
       return (
         <div className="inline-edit">
           <input
             type="date"
             value={editDateVal}
+            min={min}
+            max={max}
             onChange={(e) => setEditDateVal(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") saveEdit(field);
@@ -685,7 +700,7 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
                       : parsed.suggested_schedule_date
                         ? `${formatDateOnly(parsed.suggested_schedule_date)} (suggested)`
                         : parsed.deadline
-                          ? `${formatDateOnly(parsed.deadline.split("T")[0])} (same as deadline)`
+                          ? `flexible — any day until ${formatDateOnly(parsed.deadline.split("T")[0])}`
                           : "not yet placed",
                   )}
                 </div>
