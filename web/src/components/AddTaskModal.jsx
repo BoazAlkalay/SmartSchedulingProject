@@ -113,6 +113,18 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
       }
     } else if (scheduleMode === "schedule-at") {
       const duration = parseDurationToMinutes(parsed.duration_estimated);
+      // Any of deadline, parsed_datetime or planned_date may carry the
+      // intended date here -- a task like "dinner with friends at 6pm"
+      // has no deadline at all (deadline is null on purpose; see
+      // task_entry.py's reclassification), so the date lives in
+      // parsed_datetime or planned_date instead. Falling back to
+      // "today" whenever deadline happened to be empty is exactly what
+      // silently mis-scheduled this kind of task before.
+      const schedulingDate =
+        (parsed.deadline && parsed.deadline.split("T")[0]) ||
+        (parsed.parsed_datetime && parsed.parsed_datetime.split("T")[0]) ||
+        parsed.planned_date ||
+        null;
       await fetch(`${API}/schedule-task`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -120,11 +132,11 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
           task_title: exactTitle,
           duration_minutes: duration,
           preferred_start: scheduleAtTime,
-          preferred_date: parsed.deadline || null,
+          preferred_date: schedulingDate,
         }),
       });
       setResult(
-        `Scheduled for ${scheduleAtTime}${parsed.deadline ? ` on ${parsed.deadline}` : ""}`,
+        `Scheduled for ${scheduleAtTime}${schedulingDate ? ` on ${schedulingDate}` : ""}`,
       );
     } else if (scheduleMode === "now") {
       const now = new Date();

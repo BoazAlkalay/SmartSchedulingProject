@@ -93,7 +93,7 @@ If the user mentions a specific time they want to DO the task AT (e.g. "at 3pm",
 
 If the user mentions a specific time the task is due BY (e.g. "by 3pm", "before my 2pm meeting", "due at noon", "before 3:00pm"), include that time in the deadline field using YYYY-MM-DDTHH:MM (24-hour format), e.g. "2026-07-26T15:00". Do NOT put a "due by" time into parsed_datetime — that field is only for explicit "at X" requests. If no specific time is mentioned at all, use YYYY-MM-DD only for deadline.
 
-Do NOT invent a deadline by adding duration_estimated to parsed_datetime, and do not invent one from a start time alone. A task that only states when it starts (parsed_datetime) has no deadline unless the user separately says so with "by"/"due"/"before" language — e.g. "virtual doctor's appointment at 1:45" has a parsed_datetime of 1:45 and deadline stays null; it does NOT imply a deadline of 1:45 plus the task's duration. When in doubt whether a stated time is a start time or a due-by time, prefer parsed_datetime and leave deadline null — a wrongly-invented deadline is worse than a missing one.
+Do NOT invent a deadline by adding duration_estimated to parsed_datetime, and do not invent one from a start time alone. A task that only states when it starts (parsed_datetime) has no deadline unless the user separately says so with "by"/"due"/"before" language — e.g. "virtual doctor's appointment at 1:45" has a parsed_datetime of 1:45 and deadline stays null; it does NOT imply a deadline of 1:45 plus the task's duration. Likewise "dinner with friends sunday the 25th at 6pm" has a parsed_datetime of {next_weekdays["sunday"]}T18:00 (the dinner happens AT 6pm) and deadline stays null — it is NOT a task that's "due by" 6pm. Social/leisure plans named with "at <time>" (dinner, lunch, coffee, drinks, a party, a call, a meetup) are almost always a start time, never a due-by deadline, even with no explicit "by"/"before" wording. When in doubt whether a stated time is a start time or a due-by time, prefer parsed_datetime and leave deadline null — a wrongly-invented deadline is worse than a missing one.
 
 If the user mentions extra time needed before the deadline beyond the task itself — travel time, drive time, prep time, etc. — sum it into deadline_buffer_minutes as a single total number of minutes. If travel time is given "each direction" or "one way" and the task requires a round trip (drive there and back), DOUBLE it for the round trip total — e.g. "10-15 min to drive each direction" with a round trip implied means roughly 20-30 min total, so use ~25. If a range is given, use the higher end to be safe rather than the lower end. Only include time that's separate from duration_estimated itself. Leave null if nothing like this is mentioned.
 
@@ -138,6 +138,45 @@ No explanation, no markdown, just the JSON object or array.
 
 Input: {raw_text}
 """
+
+
+_DEADLINE_INDICATOR_RE = re.compile(
+    r"\b(by|before|due|deadline|no later than|cut ?off)\b", re.IGNORECASE
+)
+
+
+def _reclassify_ambiguous_deadline_as_start(task_data: dict, raw_text: str) -> None:
+    """
+    The parsing prompt tells the LLM to put an explicit "at X" time into
+    parsed_datetime, not deadline, and to prefer parsed_datetime whenever
+    it's ambiguous whether a stated time is a start time or a due-by time
+    ("dinner with friends ... at 6pm" is a start time, not a deadline —
+    see the prompt's own doctor's-appointment example). In practice the
+    local model sometimes ignores that and puts the time straight into
+    deadline instead, which then makes _compute_suggested_start
+    back-calculate a bogus "suggested start" (e.g. 4pm for a 6pm dinner,
+    deadline minus duration) and makes "Schedule at Parsed Time" do
+    nothing, since parsed_datetime ends up empty.
+
+    Same class of fix as _compute_suggested_start: don't trust the LLM
+    for something checkable in Python. If the returned deadline carries a
+    time component, parsed_datetime is empty, and the raw input has no
+    due-by language ("by"/"before"/"due"/etc.) anywhere, treat that time
+    the way the prompt itself says to: as the start time, not a deadline.
+    """
+    deadline = task_data.get("deadline")
+    if not deadline or "T" not in str(deadline):
+        return  # no time component -- nothing to reclassify
+    if task_data.get("parsed_datetime"):
+        return  # LLM already set a start time; deadline is intentional
+    if _DEADLINE_INDICATOR_RE.search(raw_text or ""):
+        return  # explicit due-by language present -- trust the deadline
+
+    task_data["parsed_datetime"] = deadline
+    if not task_data.get("planned_date"):
+        task_data["planned_date"] = str(deadline).split("T")[0]
+    task_data["deadline"] = None
+    task_data["deadline_buffer_minutes"] = None
 
 
 def _compute_suggested_start(task_data: dict, now: datetime) -> None:
@@ -213,6 +252,7 @@ def parse_task_from_text(raw_text: str) -> dict:
         return None
 
     for t in tasks:
+        _reclassify_ambiguous_deadline_as_start(t, raw_text)
         _compute_suggested_start(t, now)
 
     return tasks[0] if len(tasks) == 1 else tasks

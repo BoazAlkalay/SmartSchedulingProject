@@ -346,7 +346,17 @@ def schedule_task(
     """
     print("DEBUG: schedule_task called with preferred_start/preferred_date")
     now = datetime.now()
+
+    # preferred_date is meant to be date-only ("2026-10-25"), but a caller
+    # can pass a full ISO datetime ("2026-10-25T18:00") by mistake. Strip
+    # the time instead of feeding "T18:00" into date_str, where it used to
+    # make every strptime attempt below fail and silently fall back to
+    # "today" via the natural-language branch (see parse_retry_time fallback).
+    if preferred_date and "T" in preferred_date:
+        preferred_date = preferred_date.split("T")[0]
+
     date_str = preferred_date if preferred_date else now.strftime("%Y-%m-%d")
+    had_explicit_date = bool(preferred_date)
 
     # Use preferred start time if provided
     if preferred_start:
@@ -369,6 +379,20 @@ def schedule_task(
 
             # Fall back to natural language parsing
             if not parsed_start:
+                # An explicit date was given but none of the formats above
+                # matched it — that's a bug in the caller, not a "no date
+                # given" situation. Falling through to the "today"-relative
+                # natural-language parser here would silently move the task
+                # onto today, which is the exact bug this guards against.
+                if had_explicit_date:
+                    return {
+                        "status": "error",
+                        "message": (
+                            f"Could not parse preferred_date/preferred_start "
+                            f"combination: {date_str!r} / {preferred_start!r}"
+                        ),
+                    }
+
                 from reschedule import parse_retry_time
 
                 parsed_str = parse_retry_time(f"{preferred_start} today")
