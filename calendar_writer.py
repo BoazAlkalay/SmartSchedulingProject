@@ -393,10 +393,22 @@ def schedule_task(
                         ),
                     }
 
-                from reschedule import parse_retry_time
+                from date_parser import parse_natural_date
 
-                parsed_str = parse_retry_time(f"{preferred_start} today")
-                parsed_start = datetime.strptime(parsed_str, "%Y-%m-%d %H:%M")
+                parsed = parse_natural_date(preferred_start, now=now)
+                if parsed is None or "T" not in parsed:
+                    # Either totally unparseable, or it resolved to a date
+                    # with no time component (e.g. just "friday") — either
+                    # way there's no time to schedule at, so refuse rather
+                    # than guessing one.
+                    return {
+                        "status": "error",
+                        "message": f"Could not parse time: {preferred_start!r}",
+                    }
+                date_part, time_part = parsed.split("T")
+                parsed_start = datetime.strptime(
+                    f"{date_part} {time_part}", "%Y-%m-%d %H:%M"
+                )
                 # Update date_str to match the parsed date (e.g. "tomorrow 10am" → tomorrow's date)
                 date_str = parsed_start.strftime("%Y-%m-%d")
 

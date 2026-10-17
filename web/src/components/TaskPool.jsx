@@ -378,18 +378,30 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
     );
     if (!time) return;
     setTaskMenu(null);
-    const now = new Date();
-    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    await fetch(`${API}/schedule-task`, {
+    // Don't hardcode today's date here — the placeholder above invites
+    // "tomorrow 9am"/"friday 2pm" style compound input, and a day name
+    // typed into `time` needs to be free to pick its own date. Passing
+    // preferred_date: null lets the backend's natural-language parser
+    // read the day out of `time` itself (same pattern handleResumeTime
+    // already uses below).
+    const res = await fetch(`${API}/schedule-task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         task_title: task.title,
         duration_minutes: task.durationMinutes,
         preferred_start: time,
-        preferred_date: date,
+        preferred_date: null,
       }),
     });
+    const data = await res.json().catch(() => ({}));
+    // schedule_task() returns parsing/no-slot failures as a 200 with
+    // status: "error"/"no_slot" rather than an HTTP error, so res.ok
+    // alone won't catch them — check the body too.
+    if (!res.ok || data.status === "error" || data.status === "no_slot") {
+      alert(data.message || data.detail || `Couldn't schedule "${time}".`);
+      return;
+    }
     refreshAll();
   }
 
