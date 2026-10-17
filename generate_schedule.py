@@ -385,6 +385,35 @@ Return ONLY the JSON array, no other text."""
 
     placements = valid_placements
 
+    # Filter out placements on today's date that start before the current
+    # time. The prompt above already tells the LLM "do not schedule before
+    # {now}", but that's only a soft instruction -- same class of issue as
+    # every other LLM-trusted constraint in this file (working hours, date
+    # scope, hard deadlines), which all already get a deterministic filter
+    # below instead of relying on the model actually following the prompt.
+    # This one didn't, so a generated schedule could suggest slots earlier
+    # today that have already passed.
+    not_past_placements = []
+    for p in placements:
+        if p.get("date") == today_str:
+            try:
+                start_h, start_m = map(int, p["start_time"].split(":"))
+                placement_dt = now.replace(
+                    hour=start_h, minute=start_m, second=0, microsecond=0
+                )
+                if placement_dt < now:
+                    print(
+                        f"Filtered past-time placement: {p.get('title')} at "
+                        f"{p['start_time']} on {today_str} (current time is "
+                        f"{now.strftime('%H:%M')})"
+                    )
+                    continue
+            except Exception:
+                pass
+        not_past_placements.append(p)
+
+    placements = not_past_placements
+
     # Filter out placements outside the requested date scope
     scoped_placements = []
     dropped_scope = []
