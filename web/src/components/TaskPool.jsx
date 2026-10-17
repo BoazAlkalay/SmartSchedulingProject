@@ -1160,7 +1160,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
                 </button>
                 <div className="context-divider" />
                 <button onClick={() => handleTaskPlan(taskMenu.task)}>
-                  📋 Plan for Day
+                  📋 Plan
                 </button>
                 {(taskMenu.task.planned_date ||
                   taskMenu.task.planned_window_start) && (
