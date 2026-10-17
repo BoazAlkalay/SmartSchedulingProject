@@ -429,7 +429,16 @@ def retry_later(
 
 def plan_task(task_title: str, planned_date: str) -> str:
     """
-    assign a planned date to a task without scheduling a specific time
+    Assign a planned date to a task without scheduling a specific time.
+
+    If the task currently has a planned window (planned_window_start/end --
+    see plan_task_window below), pinning an explicit date that falls inside
+    that window leaves the window in place as context ("planned for Thu,
+    within the Wed-Fri window the task was given"). Pinning a date outside
+    the window replaces it entirely -- an explicit day is a stronger,
+    more specific signal than the window it may have come from, and a
+    stale window left behind once it's been contradicted would just be
+    confusing to display and to feed into Generate Schedule.
     """
     filepath = find_task_file(task_title)
     planned_date = planned_date.strip()
@@ -437,10 +446,41 @@ def plan_task(task_title: str, planned_date: str) -> str:
     if not filepath:
         return f"Could not find task: {task_title}"
 
+    post = frontmatter.load(filepath)
+    window_start = post.metadata.get("planned_window_start")
+    window_end = post.metadata.get("planned_window_end")
+
     updates = {"planned_date": planned_date}
+    if window_start and window_end and not (window_start <= planned_date <= window_end):
+        updates["planned_window_start"] = None
+        updates["planned_window_end"] = None
     update_task_file(filepath, updates)
 
     message = f"'{task_title}' planned for {planned_date}."
+    print(message)
+    return message
+
+
+def plan_task_window(task_title: str, start_date: str, end_date: str) -> str:
+    """
+    Assign a flexible planned window to a task -- "sometime between these
+    two dates" rather than a single pinned day. Clears any existing single
+    planned_date (the window becomes the task's flexible state); Generate
+    Schedule is responsible for actually placing it within [start, end]
+    as a hard constraint (see generate_schedule.py).
+    """
+    filepath = find_task_file(task_title)
+    if not filepath:
+        return f"Could not find task: {task_title}"
+
+    updates = {
+        "planned_date": None,
+        "planned_window_start": start_date,
+        "planned_window_end": end_date,
+    }
+    update_task_file(filepath, updates)
+
+    message = f"'{task_title}' planned sometime between {start_date} and {end_date}."
     print(message)
     return message
 

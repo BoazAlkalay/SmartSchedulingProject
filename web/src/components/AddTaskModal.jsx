@@ -71,6 +71,15 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
   const [editDateVal, setEditDateVal] = React.useState("");
   const [editTimeVal, setEditTimeVal] = React.useState("");
   const [editSimpleVal, setEditSimpleVal] = React.useState("");
+  // Linked-task preview rows have no general field editor (deliberately --
+  // see the comment above the row below), but a planned window is useful
+  // enough there on its own that it gets one small free-text editor,
+  // reusing the same deterministic range parser /plan-task uses for an
+  // existing task. windowEditIndex is which row (by index in
+  // parsedTasks) currently has it open, or null.
+  const [windowEditIndex, setWindowEditIndex] = React.useState(null);
+  const [windowEditVal, setWindowEditVal] = React.useState("");
+  const [windowEditError, setWindowEditError] = React.useState("");
 
   async function handleParse() {
     if (!text.trim()) return;
@@ -313,6 +322,99 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
     return deadline.includes("T")
       ? formatDateTime(deadline)
       : formatDateOnly(deadline);
+  }
+
+  function formatWindow(start, end) {
+    return `Flex: ${formatDateOnly(start)}–${formatDateOnly(end)}`;
+  }
+
+  function openWindowEdit(i, task) {
+    setWindowEditIndex(i);
+    setWindowEditError("");
+    setWindowEditVal(
+      task.planned_window_start && task.planned_window_end
+        ? ""
+        : task.planned_date || "",
+    );
+  }
+
+  async function saveWindowEdit(i) {
+    const raw = windowEditVal.trim();
+    if (!raw) {
+      // Empty input clears both the window and the plain planned date --
+      // same "Unplan" meaning as clearing the single-task date editor.
+      setParsedTasks((prev) =>
+        prev.map((t, idx) =>
+          idx === i
+            ? {
+                ...t,
+                planned_date: null,
+                planned_window_start: null,
+                planned_window_end: null,
+              }
+            : t,
+        ),
+      );
+      setWindowEditIndex(null);
+      return;
+    }
+
+    setWindowEditError("");
+    // Try reading it as a range first, same order /plan-task uses for an
+    // existing task -- "between wed and fri" vs a single "tomorrow".
+    try {
+      const rangeRes = await fetch(`${API}/parse-date-window`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: raw }),
+      });
+      const rangeData = await rangeRes.json();
+      if (rangeData.status === "parsed") {
+        setParsedTasks((prev) =>
+          prev.map((t, idx) =>
+            idx === i
+              ? {
+                  ...t,
+                  planned_date: null,
+                  planned_window_start: rangeData.start,
+                  planned_window_end: rangeData.end,
+                }
+              : t,
+          ),
+        );
+        setWindowEditIndex(null);
+        return;
+      }
+
+      const dateRes = await fetch(`${API}/parse-date`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: raw }),
+      });
+      const dateData = await dateRes.json();
+      if (dateData.status === "parsed") {
+        setParsedTasks((prev) =>
+          prev.map((t, idx) =>
+            idx === i
+              ? {
+                  ...t,
+                  planned_date: dateData.value.split("T")[0],
+                  planned_window_start: null,
+                  planned_window_end: null,
+                }
+              : t,
+          ),
+        );
+        setWindowEditIndex(null);
+        return;
+      }
+
+      setWindowEditError(
+        `Couldn't read "${raw}" as a date or range. Try: tomorrow, friday, or between wed and fri.`,
+      );
+    } catch {
+      setWindowEditError("Couldn't reach the server — try again.");
+    }
   }
 
   // Mirrors _compute_suggested_start in task_entry.py so an inline edit
@@ -935,17 +1037,74 @@ export default function AddTaskModal({ onClose, onRefresh, initialText = "" }) {
                       {t.blocked_by?.length > 0 &&
                         ` · blocked by: ${t.blocked_by.join(", ")}`}
                     </span>
-                    {(t.deadline ||
-                      t.planned_date ||
-                      t.suggested_schedule_date) && (
+                    {t.deadline && (
                       <span className="muted" style={{ fontSize: "12px" }}>
-                        {t.deadline && `Due ${formatDeadline(t.deadline)}`}
-                        {t.deadline &&
-                          (t.planned_date || t.suggested_schedule_date) &&
-                          " · "}
-                        {(t.planned_date || t.suggested_schedule_date) &&
-                          `Planned ${formatDateOnly(t.planned_date || t.suggested_schedule_date)}`}
+                        Due {formatDeadline(t.deadline)}
                       </span>
+                    )}
+
+                    {/* Linked tasks don't get the full field-by-field
+                        editor the single-task preview has below -- that's
+                        too much surface for a list that can be many rows
+                        long. A planned window is the one exception: it's
+                        genuinely useful here since these tasks already
+                        come out with a planned_date assigned, and there's
+                        otherwise no way to loosen that into a flexible
+                        range before creating them. */}
+                    {windowEditIndex === i ? (
+                      <div
+                        className="inline-edit"
+                        style={{ display: "flex", flexDirection: "column", gap: "4px" }}
+                      >
+                        <input
+                          type="text"
+                          value={windowEditVal}
+                          placeholder='e.g. "wednesday", "between wed and fri", or blank to clear'
+                          onChange={(e) => setWindowEditVal(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveWindowEdit(i);
+                            if (e.key === "Escape") setWindowEditIndex(null);
+                          }}
+                          autoFocus
+                        />
+                        {windowEditError && (
+                          <span style={{ color: "var(--red)", fontSize: "12px" }}>
+                            {windowEditError}
+                          </span>
+                        )}
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: "12px", padding: "2px 8px" }}
+                            onClick={() => saveWindowEdit(i)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            style={{ fontSize: "12px", padding: "2px 8px" }}
+                            onClick={() => setWindowEditIndex(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="preview-value preview-value-editable"
+                        style={{ fontSize: "12px" }}
+                        onClick={() => openWindowEdit(i, t)}
+                        title="Click to change"
+                      >
+                        {t.planned_window_start && t.planned_window_end
+                          ? formatWindow(t.planned_window_start, t.planned_window_end)
+                          : t.planned_date || t.suggested_schedule_date
+                            ? `Planned ${formatDateOnly(t.planned_date || t.suggested_schedule_date)}`
+                            : "Plan for a day or window"}
+                      </button>
                     )}
                   </div>
                 ))}

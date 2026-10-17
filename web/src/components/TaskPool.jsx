@@ -3,6 +3,17 @@ import { Draggable } from "@fullcalendar/interaction";
 
 const API = `http://${window.location.hostname}:8000`;
 
+// A task's planned_date pins it to one exact day. A task with no
+// planned_date but a planned window (planned_window_start/end -- "sometime
+// between Wed and Fri") is still "planned," just flexibly -- wherever the
+// code needs a single date to bucket, sort, or group by (urgency
+// suppression, the Planned for Later list), it falls back to the window's
+// start so a windowed task behaves like a planned one pinned to its
+// earliest possible day, with its card showing the full range as a badge.
+function effectivePlannedDate(task) {
+  return task.planned_date || task.planned_window_start || null;
+}
+
 const ENERGY_COLORS = {
   cantrip: "#A8C5D6",
   low: "#6BAF92",
@@ -95,17 +106,27 @@ function deadlineUrgency(deadline, plannedDate, status) {
   return { label: `Due in ${days}d${formatTime()}`, color: "#6B6560", days };
 }
 
+function formatWindowBadge(startStr, endStr) {
+  const fmt = (s) =>
+    new Date(`${s}T12:00:00`).toLocaleDateString("default", {
+      month: "short",
+      day: "numeric",
+    });
+  return `Flex: ${fmt(startStr)}–${fmt(endStr)}`;
+}
+
 function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {
   const urgency = deadlineUrgency(
     task.deadline,
-    task.planned_date,
+    effectivePlannedDate(task),
     task.status,
   );
   const isInProgress = task.status === "in-progress";
+  const hasWindow = !task.planned_date && task.planned_window_start && task.planned_window_end;
 
   return (
     <div
-      className={`task-card ${isInProgress ? "in-progress" : ""}`}
+      className={`task-card ${isInProgress ? "in-progress" : ""} ${hasWindow ? "task-card-windowed" : ""}`}
       data-title={task.title}
       data-energy={task.energy}
       data-duration={task.durationMinutes}
@@ -132,6 +153,14 @@ function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {
         </span>
         {isInProgress && task.progress && (
           <span className="task-progress-badge">{task.progress}</span>
+        )}
+        {hasWindow && (
+          <span
+            className="task-window-badge"
+            title="Flexible — can be scheduled any day in this range"
+          >
+            {formatWindowBadge(task.planned_window_start, task.planned_window_end)}
+          </span>
         )}
         {urgency?.label && (
           <span
@@ -262,7 +291,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
     : null;
 
   const plannedForViewedDate = isViewingFuture
-    ? plannedLater.filter((t) => t.planned_date === viewedDateStr)
+    ? plannedLater.filter((t) => effectivePlannedDate(t) === viewedDateStr)
     : [];
 
   function loadTasks() {
@@ -275,25 +304,32 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
           .map((t) => ({
             ...t,
             planned_date: t.planned_date === "None" ? null : t.planned_date,
+            planned_window_start:
+              t.planned_window_start === "None" ? null : t.planned_window_start,
+            planned_window_end:
+              t.planned_window_end === "None" ? null : t.planned_window_end,
             deadline: t.deadline === "None" ? null : t.deadline,
             created: t.created === "None" ? null : t.created,
             durationMinutes: parseDurationToMinutes(t.duration),
           }));
         // Split into current and planned later
         const current = allTasks.filter((t) => {
-          if (!t.planned_date) return true;
+          const d = effectivePlannedDate(t);
+          if (!d) return true;
           if (t.status === "in-progress") return true;
-          return t.planned_date <= todayStr;
+          return d <= todayStr;
         });
 
         const future = allTasks
           .filter(
             (t) =>
-              t.planned_date &&
-              t.planned_date > todayStr &&
+              effectivePlannedDate(t) &&
+              effectivePlannedDate(t) > todayStr &&
               t.status !== "in-progress",
           )
-          .sort((a, b) => a.planned_date.localeCompare(b.planned_date));
+          .sort((a, b) =>
+            effectivePlannedDate(a).localeCompare(effectivePlannedDate(b)),
+          );
 
         setTasks(current);
         setPlannedLater(future);
@@ -553,7 +589,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
 
   async function handleTaskPlan(task) {
     const date = prompt(
-      `Plan for which date?\n(e.g. today, tomorrow, this thursday, ${todayStr})`,
+      `Plan for which date?\n(e.g. today, tomorrow, this thursday, ${todayStr}, or a range like "between wed and fri")`,
     );
     if (!date) return;
     setTaskMenu(null);
@@ -961,10 +997,12 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
           </div>
         )}
 
-        {/* Planned for Later — collapsible, excludes viewed date */}
+        {/* Planned for Later — collapsible, excludes viewed date. A
+            windowed task groups under its window's start date (see
+            effectivePlannedDate above), same as every other task here. */}
         {!loading &&
           plannedLater.filter(
-            (t) => !isViewingFuture || t.planned_date !== viewedDateStr,
+            (t) => !isViewingFuture || effectivePlannedDate(t) !== viewedDateStr,
           ).length > 0 && (
             <div className="planned-later-section">
               <button
@@ -976,7 +1014,8 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
                   {
                     plannedLater.filter(
                       (t) =>
-                        !isViewingFuture || t.planned_date !== viewedDateStr,
+                        !isViewingFuture ||
+                        effectivePlannedDate(t) !== viewedDateStr,
                     ).length
                   }
                   )
@@ -989,10 +1028,11 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
                     plannedLater
                       .filter(
                         (t) =>
-                          !isViewingFuture || t.planned_date !== viewedDateStr,
+                          !isViewingFuture ||
+                          effectivePlannedDate(t) !== viewedDateStr,
                       )
                       .reduce((groups, task) => {
-                        const date = task.planned_date;
+                        const date = effectivePlannedDate(task);
                         if (!groups[date]) groups[date] = [];
                         groups[date].push(task);
                         return groups;
@@ -1122,7 +1162,8 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
                 <button onClick={() => handleTaskPlan(taskMenu.task)}>
                   📋 Plan for Day
                 </button>
-                {taskMenu.task.planned_date && (
+                {(taskMenu.task.planned_date ||
+                  taskMenu.task.planned_window_start) && (
                   <button onClick={() => handleUnplan(taskMenu.task)}>
                     🗑 Unplan
                   </button>

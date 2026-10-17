@@ -91,6 +91,8 @@ The exact same resolution applies to planned_date (the day the person intends to
 
 A WINDOW of days ("within 3 days", "within the next week", "sometime in the next 5 days", "in the next few days") is NOT the same as naming a specific day — it only constrains the deadline, the far end of the window. Do NOT set planned_date to that same end date just because it's the only date mentioned; leave planned_date null unless the person separately names an actual working day ("within 3 days, I'll do it Tuesday" → deadline is 3 days out, planned_date is Tuesday). Setting planned_date to the deadline's own date for a window phrase pins the task to the last possible day instead of leaving it free to be scheduled any time before then.
 
+A PLANNED WINDOW is different again: it's when the person names a RANGE of at least two days they want to WORK on the task — "sometime between Wednesday and Friday", "do it Monday through Friday", "plan it for sometime next week but no specific day" — as opposed to the open-ended-from-now deadline window above (which only has an end, not a start), and as opposed to suggested_schedule_date (a single specific working day). This can coexist with a separate deadline — e.g. "it's due in 10 days, try to get to it sometime Wednesday through Friday" has both a deadline 10 days out AND a planned window of Wed-Fri. When you detect this, put the person's own range phrase VERBATIM into planned_window_text (e.g. "wednesday through friday", "between monday and friday", "sometime this week") — do NOT try to compute the actual calendar dates yourself, a separate deterministic parser resolves that. Leave planned_date null when you set planned_window_text (a window is not a single pinned day). Leave planned_window_text null for a single named day (use planned_date or suggested_schedule_date instead) and for an open-ended deadline-only window phrase with no real range (those stay as the deadline-window behavior described above).
+
 If the user mentions a specific time they want to DO the task AT (e.g. "at 3pm", "tonight at 8", "tomorrow morning at 9"), extract it as parsed_datetime in ISO format combining the resolved date and time. This is a scheduling request, not a deadline.
 
 If the user mentions a specific time the task is due BY (e.g. "by 3pm", "before my 2pm meeting", "due at noon", "before 3:00pm"), include that time in the deadline field using YYYY-MM-DDTHH:MM (24-hour format), e.g. "2026-07-26T15:00". Do NOT put a "due by" time into parsed_datetime — that field is only for explicit "at X" requests. If no specific time is mentioned at all, use YYYY-MM-DD only for deadline.
@@ -119,6 +121,7 @@ Parse the following into a task. Return ONLY a JSON object with these exact fiel
     "deadline": "YYYY-MM-DD, or YYYY-MM-DDTHH:MM if a specific due-by time was mentioned, or null",
     "deadline_buffer_minutes": "number of extra minutes needed before the deadline (travel, prep, etc.), or null",
     "planned_date": "YYYY-MM-DD or null",
+    "planned_window_text": "the person's own range phrase verbatim (e.g. 'wednesday through friday'), or null -- see PLANNED WINDOW above, do not compute dates yourself",
     "suggested_schedule_date": "YYYY-MM-DD or null",
     "recurrence": "preserve exact frequency e.g. 'every week', 'twice a day', 'every 3 days', 'on mondays and wednesdays', or null",
     "preserve_completions": "true only if the person explicitly asked to keep a record of each completion of a recurring task, otherwise false",
@@ -223,6 +226,39 @@ def _loosen_window_deadline(task_data: dict, raw_text: str) -> None:
         task_data["planned_date"] = None
 
 
+def _resolve_planned_window(task_data: dict) -> None:
+    """
+    Resolve planned_window_text (the LLM's verbatim range phrase, e.g.
+    "wednesday through friday") into actual planned_window_start/end
+    dates using the same deterministic parser /plan-task uses for typed
+    window input -- same reasoning as every other date field in this
+    file: don't trust the LLM to compute a calendar date itself when a
+    tested parser already exists for exactly that.
+
+    A resolved window clears planned_date (the window IS the task's
+    flexible planned state, not a specific pinned day -- same rule
+    plan_task_window() enforces when a window is set after the fact).
+    An unparseable phrase is dropped silently rather than left dangling
+    as raw text in the task file; the task just has no window, which is
+    no worse than if the LLM had never mentioned one.
+    """
+    text = task_data.pop("planned_window_text", None)
+    task_data["planned_window_start"] = None
+    task_data["planned_window_end"] = None
+    if not text:
+        return
+
+    from date_parser import parse_date_window
+
+    window = parse_date_window(text)
+    if window is None:
+        print(f"Could not resolve planned window phrase: {text!r} -- dropping it")
+        return
+
+    task_data["planned_window_start"], task_data["planned_window_end"] = window
+    task_data["planned_date"] = None
+
+
 def _compute_suggested_start(task_data: dict, now: datetime) -> None:
     """
     If the task has a deadline with a time component, back-calculate a
@@ -298,6 +334,7 @@ def parse_task_from_text(raw_text: str) -> dict:
     for t in tasks:
         _reclassify_ambiguous_deadline_as_start(t, raw_text)
         _loosen_window_deadline(t, raw_text)
+        _resolve_planned_window(t)
         _compute_suggested_start(t, now)
 
     return tasks[0] if len(tasks) == 1 else tasks
@@ -364,7 +401,13 @@ def create_task_file(
 
     planned_date = task_data.get("planned_date")
     suggested_date = task_data.get("suggested_schedule_date")
-    if apply_suggested_dates and not planned_date and suggested_date:
+    has_window = task_data.get("planned_window_start") and task_data.get(
+        "planned_window_end"
+    )
+    # Don't let a suggested single day clobber an already-set planned
+    # window -- the window is the task's flexible planned state, same
+    # rule _resolve_planned_window() and plan_task_window() both enforce.
+    if apply_suggested_dates and not planned_date and suggested_date and not has_window:
         planned_date = suggested_date
 
     # build the frontmatter
@@ -376,6 +419,8 @@ def create_task_file(
         "deadline": deadline,
         "suggested_schedule_date": task_data.get("suggested_schedule_date"),
         "planned_date": planned_date,
+        "planned_window_start": task_data.get("planned_window_start"),
+        "planned_window_end": task_data.get("planned_window_end"),
         "recurrence": task_data.get("recurrence"),
         "preserve_completions": task_data.get("preserve_completions", False),
         "status": "unscheduled",

@@ -897,6 +897,21 @@
   margin-top: 1px;
 }
 
+/* A planned window ("sometime between Wed and Fri") is flexible, not a
+   hard pin to one day -- dashed border and a distinct badge keep it from
+   reading as a firm commitment the way a solid-border planned_date card
+   does. */
+.task-card-windowed {
+  border-style: dashed;
+}
+
+.task-window-badge {
+  font-size: 10px;
+  color: #5E8BA8;
+  font-weight: 500;
+  margin-top: 1px;
+}
+
 /* ── Add Task Grid Buttons ── */
 .add-task-buttons-grid {
   display: grid;

@@ -405,6 +405,14 @@ def get_current_tasks():
                         ).replace("\\", "/"),
                         "planned_date": str(post.metadata.get("planned_date", ""))
                         or None,
+                        "planned_window_start": str(
+                            post.metadata.get("planned_window_start", "")
+                        )
+                        or None,
+                        "planned_window_end": str(
+                            post.metadata.get("planned_window_end", "")
+                        )
+                        or None,
                         "duration": post.metadata.get("duration_estimated", ""),
                         "deadline": str(post.metadata.get("deadline", "")) or None,
                         "priority": post.metadata.get("priority", "medium"),
@@ -451,8 +459,8 @@ def unschedule_task_endpoint(request: UnscheduleTaskRequest):
 @app.post("/plan-task")
 def plan_task_endpoint(request: PlanTaskRequest):
     try:
-        from reschedule import plan_task
-        from date_parser import parse_natural_date
+        from reschedule import plan_task, plan_task_window
+        from date_parser import parse_natural_date, parse_date_window
 
         # This used to have its own inline "today/tomorrow/weekday-name"
         # parser (a third, independent copy of the same logic retry_later
@@ -462,11 +470,31 @@ def plan_task_endpoint(request: PlanTaskRequest):
         # deterministic parser instead, which refuses unparseable input
         # rather than passing it through.
         raw = request.planned_date.strip()
+
+        # Try reading it as a range ("between wed and fri", "mon-fri",
+        # "sometime this week") before falling back to a single date --
+        # one "Plan for Day" prompt handles both, same pattern used
+        # elsewhere (handleResumeTime splits on whether a time was typed).
+        window = parse_date_window(raw)
+        if window:
+            start_date, end_date = window
+            message = plan_task_window(
+                task_title=request.task_title, start_date=start_date, end_date=end_date
+            )
+            return {
+                "status": "planned_window",
+                "message": message,
+                "date": start_date,
+                "window_start": start_date,
+                "window_end": end_date,
+            }
+
         parsed = parse_natural_date(raw)
         if parsed is None:
             raise ValueError(
-                f'Couldn\'t read "{raw}" as a date. Try: today, tomorrow, '
-                f"friday, or 2026-10-20."
+                f'Couldn\'t read "{raw}" as a date or range. Try: today, '
+                f"tomorrow, friday, 2026-10-20, between wed and fri, or "
+                f"sometime this week."
             )
         # plan_task() is date-only (assigns a day without scheduling a
         # specific time) -- drop any time component parse_natural_date
@@ -1494,9 +1522,42 @@ def parse_date_endpoint(request: ParseDateRequest):
     return {"status": "parsed", "value": parsed}
 
 
+@app.post("/parse-date-window")
+def parse_date_window_endpoint(request: ParseDateRequest):
+    """
+    Resolve free-text natural language into a date RANGE ("between wed
+    and fri", "mon-fri", "sometime this week"), with no side effects --
+    same shape as /parse-date above, just for planned windows instead of
+    a single date. Used by the Add Task preview's per-linked-task window
+    editor, which only has an in-memory not-yet-created task dict to
+    update, not a real file to write through /plan-task.
+    """
+    from date_parser import parse_date_window
+
+    text = (request.text or "").strip()
+    if not text:
+        return {
+            "status": "unparsed",
+            "message": 'Enter a range, e.g. "between wed and fri" or "mon-fri".',
+        }
+
+    window = parse_date_window(text)
+    if window is None:
+        return {
+            "status": "unparsed",
+            "message": (
+                f'Couldn\'t read "{text}" as a range. Try: between wed and fri, '
+                "monday through friday, or sometime this week."
+            ),
+        }
+
+    start, end = window
+    return {"status": "parsed", "start": start, "end": end}
+
+
 @app.post("/unplan-task")
 def unplan_task_endpoint(request: UnplanRequest):
-    """Clear a task's planned_date without needing to pick a new day."""
+    """Clear a task's planned_date (or planned window) without needing to pick a new day."""
     try:
         from reschedule import find_task_file, update_task_file
 
@@ -1505,7 +1566,14 @@ def unplan_task_endpoint(request: UnplanRequest):
             raise HTTPException(
                 status_code=404, detail=f"Task not found: {request.task_title}"
             )
-        update_task_file(filepath, {"planned_date": None})
+        update_task_file(
+            filepath,
+            {
+                "planned_date": None,
+                "planned_window_start": None,
+                "planned_window_end": None,
+            },
+        )
         return {"status": "unplanned"}
     except HTTPException:
         raise

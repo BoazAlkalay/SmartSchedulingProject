@@ -36,6 +36,10 @@ def get_tasks_for_scheduling(scope_days: int, target_date: str = None) -> list:
 
             planned_date = str(post.metadata.get("planned_date", "") or "")
             deadline = str(post.metadata.get("deadline", "") or "")
+            window_start = str(post.metadata.get("planned_window_start", "") or "")
+            window_end = str(post.metadata.get("planned_window_end", "") or "")
+            window_start = window_start if window_start != "None" else None
+            window_end = window_end if window_end != "None" else None
 
             # Filter by relevance to scope
             if planned_date and planned_date != "None":
@@ -43,6 +47,15 @@ def get_tasks_for_scheduling(scope_days: int, target_date: str = None) -> list:
                 if planned_date > (
                     datetime.now() + timedelta(days=scope_days)
                 ).strftime("%Y-%m-%d"):
+                    continue
+            elif window_start and window_end:
+                # A windowed task is relevant if its window overlaps the
+                # scope at all -- it doesn't need to START within scope,
+                # just not be entirely past it.
+                scope_end = (datetime.now() + timedelta(days=scope_days)).strftime(
+                    "%Y-%m-%d"
+                )
+                if window_start > scope_end:
                     continue
 
             tasks.append(
@@ -54,6 +67,8 @@ def get_tasks_for_scheduling(scope_days: int, target_date: str = None) -> list:
                     "priority": post.metadata.get("priority", "medium"),
                     "deadline": deadline if deadline != "None" else None,
                     "planned_date": planned_date if planned_date != "None" else None,
+                    "planned_window_start": window_start,
+                    "planned_window_end": window_end,
                     "tags": post.metadata.get("tags", []),
                     "folder": str(filepath.parent.name),
                     "progress": post.metadata.get("progress", "0%"),
@@ -240,6 +255,11 @@ def generate_schedule(
             task_list += f" | deadline:{t['deadline']}"
         if t["planned_date"]:
             task_list += f" | planned:{t['planned_date']}"
+        if t.get("planned_window_start") and t.get("planned_window_end"):
+            task_list += (
+                f" | planned WINDOW: {t['planned_window_start']} to "
+                f"{t['planned_window_end']} (any day in this range, not a specific day)"
+            )
         if t["status"] == "in-progress":
             task_list += (
                 f" | IN PROGRESS ({t['progress']} done, {t['remaining']} remaining)"
@@ -294,6 +314,7 @@ Rules:
 13. Current user energy is {energy_desc} — adjust task difficulty accordingly
 14. Some tasks are split into linked parts (titles ending in "(Part 1)", "(Part 2)", etc.) — if both a task and its earlier part(s) are being scheduled today, always place the earlier part at an earlier time than the later part, with at least 15 minutes between them for a break
 15. If a task's deadline includes a specific time (e.g. deadline:2026-07-21T15:00), it MUST be placed so it fully finishes (start_time + duration) before that time on that date — this is a hard constraint, stricter than the general "deadlines get priority" rule
+16. A task with a "planned WINDOW" must be placed on a date within that window (inclusive) — never before the start or after the end. It has no single preferred day within the window; pick whichever day in the range fits best
 
 Return a JSON array like this:
 [
@@ -457,6 +478,32 @@ Return ONLY the JSON array, no other text."""
         deadline_ok_placements.append(p)
 
     placements = deadline_ok_placements
+
+    # Filter out placements that fall outside a task's planned window --
+    # rule 16 above is a prompt instruction, same soft-constraint problem
+    # as everything else filtered deterministically in this function (the
+    # model can and does ignore "must be placed within the window").
+    window_lookup = {
+        t["title"]: (t["planned_window_start"], t["planned_window_end"])
+        for t in tasks
+        if t.get("planned_window_start") and t.get("planned_window_end")
+    }
+    window_ok_placements = []
+    dropped_window = []
+    for p in placements:
+        window = window_lookup.get(p.get("title"))
+        if window:
+            start, end = window
+            if not (start <= p.get("date", "") <= end):
+                print(
+                    f"Filtered placement outside planned window: {p.get('title')} "
+                    f"on {p.get('date')} (window is {start} to {end})"
+                )
+                dropped_window.append(p)
+                continue
+        window_ok_placements.append(p)
+
+    placements = window_ok_placements
 
     return {
         "status": "generated",

@@ -223,6 +223,78 @@ def _parse_date_part(text: str, base):
     return None
 
 
+_RANGE_SEP_RE = re.compile(r"\s+(?:to|through|thru|-|–|—)\s+")
+
+
+def _clean_date_only_text(text: str) -> str:
+    """
+    Strip ordinal suffixes ("12th" -> "12") and filler words from
+    pre-lowercased, date-only text (no time component to worry about).
+    Shared by parse_date_window below; parse_natural_date does the same
+    two steps inline since it also has a time component to juggle.
+    """
+    cleaned = re.sub(r"\b(\d{1,2})(?:st|nd|rd|th)\b", r"\1", text)
+    words = [w for w in cleaned.split() if w not in FILLER_WORDS]
+    return " ".join(words)
+
+
+def parse_date_window(text: str, now: datetime = None) -> tuple[str, str] | None:
+    """
+    Parse a natural-language date RANGE into (start, end), both YYYY-MM-DD.
+    Returns None if the text doesn't read as a range at all (callers should
+    fall back to parse_natural_date for a single date).
+
+    Understands:
+      between X and Y, X through Y, X thru Y, X to Y, X - Y
+      sometime this week             -> [today, the coming Sunday]
+      within/in (the next) N days/weeks -> [today, today + N]
+
+    Window ends are always whole days -- a planned window is "any day in
+    this span," not a specific moment, so (unlike parse_natural_date) this
+    never reads a clock time out of the text.
+    """
+    now = now or datetime.now()
+    if not text or not text.strip():
+        return None
+
+    base = effective_now(now).date()
+    cleaned = text.strip().lower().replace(",", " ")
+
+    def resolve(side: str):
+        side = _clean_date_only_text(side.strip())
+        return _parse_date_part(side, base) if side else None
+
+    start = end = None
+
+    m = re.fullmatch(r"(?:sometime\s+)?between\s+(.+?)\s+and\s+(.+)", cleaned)
+    if m:
+        start, end = resolve(m.group(1)), resolve(m.group(2))
+    elif re.fullmatch(r"sometime\s+this\s+week", cleaned):
+        start = base
+        end = base + timedelta(days=(6 - base.weekday()) % 7)
+    else:
+        # Count word is optional -- "in the next week" means the same
+        # thing as "in 1 week", just without spelling the 1 out.
+        m2 = re.fullmatch(
+            rf"(?:within|in)\s+(?:the\s+next\s+)?(?:({_COUNT_RE})\s+)?(day|week)s?",
+            cleaned,
+        )
+        if m2:
+            count = _count(m2.group(1)) if m2.group(1) else 1
+            n = count * (7 if m2.group(2) == "week" else 1)
+            start, end = base, base + timedelta(days=n)
+        else:
+            parts = _RANGE_SEP_RE.split(cleaned, maxsplit=1)
+            if len(parts) == 2:
+                start, end = resolve(parts[0]), resolve(parts[1])
+
+    if start is None or end is None:
+        return None
+    if end < start:
+        start, end = end, start
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+
 def parse_natural_date(text: str, now: datetime = None) -> str | None:
     """
     Parse a short natural-language date into YYYY-MM-DD, or YYYY-MM-DDTHH:MM
