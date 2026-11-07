@@ -14,6 +14,32 @@ function effectivePlannedDate(task) {
   return task.planned_date || task.planned_window_start || null;
 }
 
+// "Mon 8:45 AM" / "today 8:45 AM" / "tomorrow 8:45 AM" for the menu label.
+// Parsed as a local date by parts, not new Date(string), which would treat a
+// date-only or T-less string as UTC and can land on the wrong day.
+function formatSuggestedTime(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso || "");
+  if (!m) return null;
+  const when = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  if (when < new Date()) return null; // already passed -- nothing to offer
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round(
+    (new Date(+m[1], +m[2] - 1, +m[3]) - today) / 86400000,
+  );
+  const day =
+    days === 0
+      ? "today"
+      : days === 1
+        ? "tomorrow"
+        : when.toLocaleDateString("default", { weekday: "short" });
+  const time = when.toLocaleTimeString("default", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${day} ${time}`;
+}
+
 // "Suggested Soon": a task with a flexible planned window (no pinned
 // planned_date) whose window includes today. It isn't planned for a day
 // or scheduled, so it would otherwise sink into Backlog -- which is easy
@@ -452,6 +478,31 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
     if (!res.ok || data.status === "error" || data.status === "no_slot") {
       alert(data.message || data.detail || `Couldn't schedule "${time}".`);
       return;
+    }
+    refreshAll();
+  }
+
+  async function handleScheduleAtSuggested(task) {
+    setTaskMenu(null);
+    const res = await fetch(`${API}/schedule-at-suggested`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_title: task.title }),
+    });
+    const data = await res.json().catch(() => ({}));
+    // Failures come back as a 200 with a status, not an HTTP error (same
+    // as /schedule-task), so check the body as well as res.ok.
+    if (
+      !res.ok ||
+      ["error", "no_slot", "no_suggestion", "past"].includes(data.status)
+    ) {
+      alert(data.message || data.detail || "Couldn't schedule this task.");
+      return;
+    }
+    if (data.overlaps && data.overlaps.length > 0) {
+      alert(
+        `Scheduled, but it overlaps with: ${data.overlaps.join(", ")}.`,
+      );
     }
     refreshAll();
   }
@@ -1180,6 +1231,15 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
               /* Regular task — show Schedule options */
               <>
                 <div className="context-section-label">Schedule</div>
+                {taskMenu.task.status !== "scheduled" &&
+                  formatSuggestedTime(taskMenu.task.suggested_time) && (
+                    <button
+                      onClick={() => handleScheduleAtSuggested(taskMenu.task)}
+                    >
+                      🎯 Schedule at{" "}
+                      {formatSuggestedTime(taskMenu.task.suggested_time)}
+                    </button>
+                  )}
                 <button onClick={() => handleTaskScheduleTime(taskMenu.task)}>
                   📅 Enter time
                 </button>

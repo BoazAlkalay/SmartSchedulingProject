@@ -379,6 +379,7 @@ def get_current_tasks():
     """Return current unfinished tasks as a simple list."""
     try:
         from config import TASKS, INBOX, VAULT_PATH
+        from task_entry import compute_suggested_time
         import frontmatter
 
         tasks = []
@@ -419,10 +420,99 @@ def get_current_tasks():
                         "progress": post.metadata.get("progress", ""),
                         "created": str(post.metadata.get("created", "")) or None,
                         "muted": bool(post.metadata.get("muted", False)),
+                        "suggested_time": compute_suggested_time(post.metadata),
                     }
                 )
 
         return {"tasks": tasks, "titles": [t["title"] for t in tasks]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ScheduleAtSuggestedRequest(BaseModel):
+    task_title: str
+
+
+@app.post("/schedule-at-suggested")
+def schedule_at_suggested_endpoint(request: ScheduleAtSuggestedRequest):
+    """
+    Schedule a task at its own suggested start time, with no further input.
+    The time comes from compute_suggested_time() (fixed start time, else
+    deadline minus duration), the same value the context menu labels the
+    button with. The click is the confirmation; an overlap with an existing
+    calendar event is reported back as a heads-up, never blocks.
+    """
+    try:
+        import frontmatter as fm
+        from datetime import datetime, timedelta
+        from calendar_writer import schedule_task
+        from reschedule import find_task_file
+        from split_task import parse_duration_to_minutes
+        from task_entry import compute_suggested_time
+
+        filepath = find_task_file(request.task_title)
+        if not filepath:
+            raise HTTPException(
+                status_code=404, detail=f"Task not found: {request.task_title}"
+            )
+        meta = fm.load(filepath).metadata
+        title = meta.get("title", request.task_title)
+
+        suggested = compute_suggested_time(meta)
+        if not suggested:
+            return {
+                "status": "no_suggestion",
+                "message": "This task has no start time or time-of-day deadline to schedule from.",
+            }
+
+        start = datetime.fromisoformat(suggested)
+        if start < datetime.now():
+            return {
+                "status": "past",
+                "message": f"The suggested time ({start.strftime('%a %I:%M %p')}) has already passed.",
+            }
+
+        duration = parse_duration_to_minutes(
+            str(meta.get("duration_estimated") or "")
+        ) or 60
+
+        result = schedule_task(
+            task_title=title,
+            duration_minutes=duration,
+            preferred_start=start.strftime("%H:%M"),
+            preferred_date=start.strftime("%Y-%m-%d"),
+        )
+
+        # Heads-up only: schedule_task books the exact time without
+        # checking the calendar, so say so if something is already there.
+        if isinstance(result, dict) and result.get("status", "").startswith(
+            "scheduled"
+        ):
+            try:
+                from calendar_reader import get_all_events, parse_event_time
+
+                end = start + timedelta(minutes=duration)
+                local = start.astimezone()
+                events = get_all_events(
+                    time_min=local - timedelta(hours=12),
+                    time_max=local + timedelta(minutes=duration) + timedelta(hours=12),
+                )
+                overlaps = []
+                for e in events:
+                    if e.get("all_day") or e.get("id") == result.get("event_id"):
+                        continue
+                    e_start = parse_event_time(e["start"]).replace(tzinfo=None)
+                    e_end = parse_event_time(e["end"]).replace(tzinfo=None)
+                    if e_start < end and e_end > start:
+                        overlaps.append(e.get("title", "Untitled"))
+                if overlaps:
+                    result["overlaps"] = overlaps
+            except Exception as overlap_err:
+                print(f"Overlap check skipped: {overlap_err}")
+
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

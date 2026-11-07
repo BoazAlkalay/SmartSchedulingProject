@@ -374,6 +374,53 @@ def _compute_suggested_start(task_data: dict, now: datetime) -> None:
         task_data["minutes_late_if_now"] = None
 
 
+def compute_suggested_time(meta: dict):
+    """
+    The time a task should START, as "YYYY-MM-DDTHH:MM", or None.
+
+    Computed fresh from the task's own fields every time rather than read
+    from the stored suggested_start_time, which goes stale the moment the
+    deadline is edited (/set-deadline only rewrites the deadline).
+
+      1. parsed_datetime -- an explicit "at X" start time the person gave
+         (a fixed-time task like an appointment): use it as-is.
+      2. A deadline with a time of day: deadline - duration - buffer.
+      3. Otherwise None (nothing to suggest).
+    """
+    def _dt(value):
+        try:
+            return datetime.fromisoformat(str(value).strip())
+        except (ValueError, TypeError):
+            return None
+
+    parsed = meta.get("parsed_datetime")
+    if parsed:
+        dt = _dt(parsed)
+        if dt:
+            return dt.strftime("%Y-%m-%dT%H:%M")
+
+    deadline = meta.get("deadline")
+    # A bare date has no time of day to back-calculate from. Check the
+    # value itself: str(datetime) uses a space, not "T".
+    if not deadline:
+        return None
+    deadline_text = str(deadline).strip()
+    deadline_dt = _dt(deadline_text)
+    # YAML may hand back a date or datetime object rather than a string, so
+    # judge "has a time of day" from the stringified value.
+    if deadline_dt is None or ("T" not in deadline_text and " " not in deadline_text):
+        return None
+
+    minutes = parse_duration_to_minutes(
+        str(meta.get("duration_estimated") or "")
+    ) or 60
+    try:
+        minutes += int(meta.get("deadline_buffer_minutes") or 0)
+    except (ValueError, TypeError):
+        pass
+    return (deadline_dt - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M")
+
+
 def _postprocess_parsed_tasks(tasks: list, raw_text: str, now: datetime) -> None:
     """
     The deterministic Python guards that run on every LLM-parsed task, in
@@ -510,6 +557,12 @@ def create_task_file(
         # to confirm through at all (iPhone Shortcuts dictation).
         "suggested_start_time": task_data.get("suggested_start_time"),
         "suggested_start_feasible": task_data.get("suggested_start_feasible"),
+        # Informational inputs for compute_suggested_time(): the explicit
+        # "at X" start time (fixed-time tasks) and the travel/prep buffer.
+        # Neither was persisted before, so a task file couldn't tell a
+        # fixed appointment from a plain deadline, or remember its buffer.
+        "parsed_datetime": task_data.get("parsed_datetime"),
+        "deadline_buffer_minutes": task_data.get("deadline_buffer_minutes"),
         "retry_at": None,
         "retry_note": None,
         "continuation_note": None,
