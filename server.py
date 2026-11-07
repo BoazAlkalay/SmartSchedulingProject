@@ -380,7 +380,7 @@ def get_current_tasks():
     """Return current unfinished tasks as a simple list."""
     try:
         from config import TASKS, INBOX, VAULT_PATH
-        from task_entry import compute_suggested_time
+        from task_entry import compute_suggested_time, compute_scheduled_end
         import frontmatter
 
         tasks = []
@@ -422,6 +422,7 @@ def get_current_tasks():
                         "created": str(post.metadata.get("created", "")) or None,
                         "muted": bool(post.metadata.get("muted", False)),
                         "suggested_time": compute_suggested_time(post.metadata),
+                        "scheduled_end": compute_scheduled_end(post.metadata),
                     }
                 )
 

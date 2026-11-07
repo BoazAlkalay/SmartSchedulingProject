@@ -781,6 +781,25 @@ def complete_task(
     if filepath:
         post = frontmatter.load(filepath)
 
+        # "Finished at 3:40pm" is just as good a record of how long it took
+        # as typing the duration, so derive duration_actual from it. Without
+        # this the completion log kept a blank duration whenever the person
+        # gave a finish time instead of a length. Must run before the
+        # scheduled_time is cleared below.
+        if actual_completion_time and not actual_duration:
+            from task_entry import compute_scheduled_start
+            from split_task import minutes_to_duration_str
+
+            scheduled_start = compute_scheduled_start(post.metadata)
+            try:
+                finished = datetime.fromisoformat(actual_completion_time)
+            except (ValueError, TypeError):
+                finished = None
+            if scheduled_start and finished:
+                minutes = int((finished - scheduled_start).total_seconds() // 60)
+                if minutes > 0:
+                    actual_duration = minutes_to_duration_str(minutes)
+
         # Adjust calendar event to reflect actual completion (preserves a
         # historical record), rather than deleting it outright — same
         # approach as Stopping Now. Doesn't block completion if this fails

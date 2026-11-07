@@ -1,3 +1,5 @@
+import LateCompletionPrompt from "./LateCompletionPrompt";
+import { isLateCompletion } from "../lateCompletion";
 import React, { useEffect, useRef } from "react";
 import { Draggable } from "@fullcalendar/interaction";
 
@@ -282,6 +284,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
   const [tasks, setTasks] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [taskMenu, setTaskMenu] = React.useState(null);
+  const [lateCompletion, setLateCompletion] = React.useState(null);
   const menuRef = React.useRef(null);
   const [menuStyle, setMenuStyle] = React.useState({});
   const [filter, setFilterState] = React.useState(remembered.filter);
@@ -480,6 +483,29 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
       return;
     }
     refreshAll();
+  }
+
+  // Complete a task. A task finished well after its scheduled end first asks
+  // how long it really took (or lets you skip), so the completion log gets a
+  // real duration instead of a blank one.
+  async function completeTask(task, addNext, extra = {}) {
+    setTaskMenu(null);
+    await fetch(`${API}/complete-task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_title: task.title, ...extra }),
+    });
+    refreshAll();
+    if (addNext) onCompleteAddNext(`Follow-up to "${task.title}": `);
+  }
+
+  function requestComplete(task, addNext) {
+    setTaskMenu(null);
+    if (isLateCompletion(task.scheduled_end)) {
+      setLateCompletion({ task, addNext });
+      return;
+    }
+    completeTask(task, addNext);
   }
 
   async function handleScheduleAtSuggested(task) {
@@ -1192,33 +1218,10 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
                   📅 Enter time / date
                 </button>
                 <div className="context-divider" />
-                <button
-                  onClick={async () => {
-                    const t = taskMenu.task.title;
-                    setTaskMenu(null);
-                    await fetch(`${API}/complete-task`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ task_title: t }),
-                    });
-                    refreshAll();
-                  }}
-                >
+                <button onClick={() => requestComplete(taskMenu.task, false)}>
                   ✓ Complete
                 </button>
-                <button
-                  onClick={async () => {
-                    const t = taskMenu.task.title;
-                    setTaskMenu(null);
-                    await fetch(`${API}/complete-task`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ task_title: t }),
-                    });
-                    refreshAll();
-                    onCompleteAddNext(`Follow-up to "${t}": `);
-                  }}
-                >
+                <button onClick={() => requestComplete(taskMenu.task, true)}>
                   ➕ Complete & Add
                 </button>
                 <div className="context-divider" />
@@ -1287,33 +1290,10 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
                   </button>
                 )}
                 <div className="context-divider" />
-                <button
-                  onClick={async () => {
-                    const t = taskMenu.task.title;
-                    setTaskMenu(null);
-                    await fetch(`${API}/complete-task`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ task_title: t }),
-                    });
-                    refreshAll();
-                  }}
-                >
+                <button onClick={() => requestComplete(taskMenu.task, false)}>
                   ✓ Complete
                 </button>
-                <button
-                  onClick={async () => {
-                    const t = taskMenu.task.title;
-                    setTaskMenu(null);
-                    await fetch(`${API}/complete-task`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ task_title: t }),
-                    });
-                    refreshAll();
-                    onCompleteAddNext(`Follow-up to "${t}": `);
-                  }}
-                >
+                <button onClick={() => requestComplete(taskMenu.task, true)}>
                   ➕ Complete & Add
                 </button>
                 {/* Only show Unschedule if task is already scheduled */}
@@ -1333,6 +1313,20 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
             )}
           </div>
         </>
+      )}
+
+      {/* ── Late completion: how long did it actually take? ── */}
+      {lateCompletion && (
+        <LateCompletionPrompt
+          title={lateCompletion.task.title}
+          scheduledEnd={lateCompletion.task.scheduled_end}
+          onCancel={() => setLateCompletion(null)}
+          onSubmit={(extra) => {
+            const { task, addNext } = lateCompletion;
+            setLateCompletion(null);
+            completeTask(task, addNext, extra);
+          }}
+        />
       )}
     </div>
   );

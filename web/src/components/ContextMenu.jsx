@@ -1,4 +1,5 @@
 import React from "react";
+import { isLateCompletion } from "../lateCompletion";
 
 const API = `http://${window.location.hostname}:8000`;
 
@@ -26,6 +27,7 @@ export default function ContextMenu({
   const [completedAtHours, setCompletedAtHours] = React.useState("");
   const [completedAtMinutes, setCompletedAtMinutes] = React.useState("");
   const [error, setError] = React.useState("");
+  const [lateNote, setLateNote] = React.useState(false);
 
   const menuRef = React.useRef(null);
   const [menuStyle, setMenuStyle] = React.useState({});
@@ -58,6 +60,14 @@ export default function ContextMenu({
   const title = event.title;
 
   async function handleComplete() {
+    // Well past the block's end: ask for when/how long first (the same
+    // Completed At/In form), instead of completing with no duration. That
+    // form has no skip, so "Complete without duration" lives there too.
+    if (view === "main" && isLateCompletion(event.end)) {
+      changeView("completedAt");
+      setLateNote(true);
+      return;
+    }
     setSubmitting(true);
     await fetch(`${API}/complete-task`, {
       method: "POST",
@@ -271,6 +281,12 @@ export default function ContextMenu({
         {/* Completed At/In form */}
         {view === "completedAt" && (
           <div className="context-form">
+            {lateNote && (
+              <div className="context-note">
+                This ran past its scheduled time. Record when it finished or
+                how long it took, or complete without a duration.
+              </div>
+            )}
             <div className="form-field">
               <label>How do you want to record this?</label>
               <div
@@ -335,6 +351,24 @@ export default function ContextMenu({
               <button className="btn-ghost" onClick={() => setView("main")}>
                 ← Back
               </button>
+              {lateNote && (
+                <button
+                  className="btn-ghost"
+                  onClick={async () => {
+                    setSubmitting(true);
+                    await fetch(`${API}/complete-task`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ task_title: title }),
+                    });
+                    onClose();
+                    onRefresh();
+                  }}
+                  disabled={submitting}
+                >
+                  Skip
+                </button>
+              )}
               <button
                 className="btn-primary"
                 onClick={handleCompletedAt}

@@ -421,6 +421,37 @@ def compute_suggested_time(meta: dict):
     return (deadline_dt - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M")
 
 
+def compute_scheduled_start(meta: dict):
+    """
+    A scheduled task's start as a naive local datetime, or None. Reads the
+    scheduled_date + scheduled_time written by update_task_with_event()
+    ("09:00 AM"; a 24-hour "09:00" is accepted too).
+    """
+    if meta.get("status") != "scheduled":
+        return None
+    time_text = str(meta.get("scheduled_time") or "").strip()
+    date_text = str(meta.get("scheduled_date") or "")[:10]
+    if not time_text or not date_text:
+        return None
+    for fmt in ("%Y-%m-%d %I:%M %p", "%Y-%m-%d %I:%M%p", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(f"{date_text} {time_text}", fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def compute_scheduled_end(meta: dict):
+    """A scheduled task's end as "YYYY-MM-DDTHH:MM", or None."""
+    start = compute_scheduled_start(meta)
+    if start is None:
+        return None
+    minutes = parse_duration_to_minutes(
+        str(meta.get("scheduled_duration") or meta.get("duration_estimated") or "")
+    ) or 60
+    return (start + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M")
+
+
 def _postprocess_parsed_tasks(tasks: list, raw_text: str, now: datetime) -> None:
     """
     The deterministic Python guards that run on every LLM-parsed task, in
