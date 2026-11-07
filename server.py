@@ -92,6 +92,7 @@ class PlanTaskRequest(BaseModel):
 
 class FindSlotRequest(BaseModel):
     duration_minutes: int
+    date: Optional[str] = None  # YYYY-MM-DD; None = today
 
 
 class CompleteTaskRequest(BaseModel):
@@ -431,6 +432,10 @@ def get_current_tasks():
 
 class ScheduleAtSuggestedRequest(BaseModel):
     task_title: str
+    # The day being viewed in the app (YYYY-MM-DD). Only used when the task
+    # has no usable suggested time and a free slot has to be found; today
+    # (or a past/missing date) searches from now.
+    date: Optional[str] = None
 
 
 @app.post("/schedule-at-suggested")
@@ -441,6 +446,10 @@ def schedule_at_suggested_endpoint(request: ScheduleAtSuggestedRequest):
     deadline minus duration), the same value the context menu labels the
     button with. The click is the confirmation; an overlap with an existing
     calendar event is reported back as a heads-up, never blocks.
+
+    When there is no suggested time, or it has already passed, the task goes
+    into the first free slot on today (or on the viewed future date) instead.
+    Deterministic Python only -- no LLM call.
     """
     try:
         import frontmatter as fm
@@ -458,23 +467,31 @@ def schedule_at_suggested_endpoint(request: ScheduleAtSuggestedRequest):
         meta = fm.load(filepath).metadata
         title = meta.get("title", request.task_title)
 
-        suggested = compute_suggested_time(meta)
-        if not suggested:
-            return {
-                "status": "no_suggestion",
-                "message": "This task has no start time or time-of-day deadline to schedule from.",
-            }
-
-        start = datetime.fromisoformat(suggested)
-        if start < datetime.now():
-            return {
-                "status": "past",
-                "message": f"The suggested time ({start.strftime('%a %I:%M %p')}) has already passed.",
-            }
-
         duration = parse_duration_to_minutes(
             str(meta.get("duration_estimated") or "")
         ) or 60
+
+        suggested = compute_suggested_time(meta)
+        start = datetime.fromisoformat(suggested) if suggested else None
+
+        if start is None or start < datetime.now():
+            # No usable suggested time: take the first free slot instead.
+            from calendar_writer import find_best_slot
+
+            slot = find_best_slot(duration, request.date)
+            if not slot:
+                where = f"on {request.date}" if request.date else "today"
+                return {
+                    "status": "no_slot",
+                    "message": f"No free slot found {where} for this task.",
+                }
+            slot_start = datetime.fromisoformat(slot["start_iso"])
+            return schedule_task(
+                task_title=title,
+                duration_minutes=duration,
+                preferred_start=slot_start.strftime("%H:%M"),
+                preferred_date=slot_start.strftime("%Y-%m-%d"),
+            )
 
         result = schedule_task(
             task_title=title,
@@ -799,9 +816,12 @@ def find_slot_endpoint(request: FindSlotRequest):
     try:
         from calendar_writer import find_best_slot
 
-        slot = find_best_slot(request.duration_minutes)
+        slot = find_best_slot(request.duration_minutes, request.date)
         if not slot:
-            return {"status": "no_slot", "message": "No available slot found today"}
+            return {
+                "status": "no_slot",
+                "message": f"No available slot found {'on ' + request.date if request.date else 'today'}",
+            }
         return {
             "status": "found",
             "start": slot["start"],

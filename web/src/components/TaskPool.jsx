@@ -487,15 +487,17 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
     const res = await fetch(`${API}/schedule-at-suggested`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_title: task.title }),
+      body: JSON.stringify({
+        task_title: task.title,
+        // Only matters when there's no suggested time and a slot has to be
+        // found: search the viewed day if it's in the future, else today.
+        date: isViewingFuture ? viewedDateStr : null,
+      }),
     });
     const data = await res.json().catch(() => ({}));
     // Failures come back as a 200 with a status, not an HTTP error (same
     // as /schedule-task), so check the body as well as res.ok.
-    if (
-      !res.ok ||
-      ["error", "no_slot", "no_suggestion", "past"].includes(data.status)
-    ) {
+    if (!res.ok || ["error", "no_slot"].includes(data.status)) {
       alert(data.message || data.detail || "Couldn't schedule this task.");
       return;
     }
@@ -1231,23 +1233,30 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
               /* Regular task — show Schedule options */
               <>
                 <div className="context-section-label">Schedule</div>
-                {taskMenu.task.status !== "scheduled" &&
-                  formatSuggestedTime(taskMenu.task.suggested_time) && (
-                    <button
-                      onClick={() => handleScheduleAtSuggested(taskMenu.task)}
-                    >
-                      🎯 Schedule at{" "}
-                      {formatSuggestedTime(taskMenu.task.suggested_time)}
-                    </button>
-                  )}
+                {taskMenu.task.status !== "scheduled" && (
+                  <button
+                    onClick={() => handleScheduleAtSuggested(taskMenu.task)}
+                  >
+                    🎯{" "}
+                    {formatSuggestedTime(taskMenu.task.suggested_time)
+                      ? `Schedule at ${formatSuggestedTime(taskMenu.task.suggested_time)}`
+                      : `Schedule in next free slot (${isViewingFuture ? viewedDateLabel : "today"})`}
+                  </button>
+                )}
                 <button onClick={() => handleTaskScheduleTime(taskMenu.task)}>
                   📅 Enter time
                 </button>
-                <button
-                  onClick={() => handleTaskScheduleFindSlot(taskMenu.task)}
-                >
-                  🔍 Find next slot
-                </button>
+                {/* Redundant (and today-only) when the button above already
+                    finds a slot, so only show it when that one is using a
+                    suggested time or the task is being rescheduled. */}
+                {(taskMenu.task.status === "scheduled" ||
+                  formatSuggestedTime(taskMenu.task.suggested_time)) && (
+                  <button
+                    onClick={() => handleTaskScheduleFindSlot(taskMenu.task)}
+                  >
+                    🔍 Find next slot
+                  </button>
+                )}
                 <button onClick={() => handleTaskScheduleNow(taskMenu.task)}>
                   ⚡ Start now
                 </button>

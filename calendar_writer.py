@@ -19,18 +19,34 @@ def round_to_5_minutes(dt):
     return dt
 
 
-def find_best_slot(duration_minutes: int) -> dict:
+def find_best_slot(duration_minutes: int, date_str: str = None) -> dict:
     """
     Find the best available slot for a task of given duration.
     Considers both Google Calendar events AND scheduled vault tasks.
+
+    date_str: optional "YYYY-MM-DD" to search a different day. Today (or
+    no date, or a date in the past) searches from now until 10pm, as
+    before. A future date searches that whole day from 8am to 10pm.
     """
     from config import TASKS, INBOX
     import frontmatter
     import re
 
-    events = get_todays_events()
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
+    target_str = date_str if date_str and date_str > today_str else today_str
+    is_today = target_str == today_str
+
+    if is_today:
+        events = get_todays_events()
+    else:
+        from calendar_reader import get_all_events
+
+        day_start_local = datetime.strptime(target_str, "%Y-%m-%d").astimezone()
+        events = get_all_events(
+            time_min=day_start_local,
+            time_max=day_start_local + timedelta(days=1),
+        )
 
     # Build list of busy blocks from Google Calendar
     busy = []
@@ -60,7 +76,7 @@ def find_best_slot(duration_minutes: int) -> dict:
             if (
                 status != "scheduled"
                 or not scheduled_time
-                or scheduled_date != today_str
+                or scheduled_date != target_str
             ):
                 continue
 
@@ -101,9 +117,11 @@ def find_best_slot(duration_minutes: int) -> dict:
         else:
             merged.append((start, end))
 
-    # Find first free slot after now
-    day_end = datetime.strptime(f"{today_str} 22:00", "%Y-%m-%d %H:%M")
-    current = now
+    # Find first free slot: after now today, from 8am on a future day
+    day_end = datetime.strptime(f"{target_str} 22:00", "%Y-%m-%d %H:%M")
+    current = (
+        now if is_today else datetime.strptime(f"{target_str} 08:00", "%Y-%m-%d %H:%M")
+    )
 
     for block_start, block_end in merged:
         if block_start > current:
