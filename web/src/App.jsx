@@ -68,8 +68,8 @@ function App() {
 
   async function handleNudge() {
     const input = prompt(
-      "Daily \"plan your day\" reminder time (24-hour, e.g. 10:05).\nLeave blank to turn it off.",
-      nudge.time || "10:05",
+      "Daily \"plan your day\" reminder time (24-hour, e.g. 08:30).\nLeave blank to turn it off.",
+      nudge.time || "08:30",
     );
     if (input === null) return; // cancelled
     const text = input.trim();
@@ -84,6 +84,30 @@ function App() {
       return;
     }
     setNudge({ enabled: data.status === "on", time: data.time || null });
+  }
+
+  // Move only the next nudge: "180" = 3 hours later, "11:30" = at 11:30.
+  async function handleSnoozeNudge() {
+    const input = prompt(
+      "Move the next nudge: minutes later (e.g. 180) or a time (e.g. 11:30).",
+      "180",
+    );
+    if (input === null) return;
+    const text = input.trim();
+    const body = /^\d+$/.test(text)
+      ? { minutes: parseInt(text, 10) }
+      : { time: text };
+    const res = await fetch(`${API}/daily-nudge/snooze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.detail || "Couldn't move the nudge.");
+      return;
+    }
+    alert(`Next nudge moved to ${data.to}.`);
   }
 
   const handleRefresh = useCallback(() => {
@@ -504,6 +528,11 @@ function App() {
               <button className="btn-ghost" onClick={handleNudge}>
                 ⏰ Daily nudge: {nudge.enabled ? nudge.time : "off"}
               </button>
+              {nudge.enabled && (
+                <button className="btn-ghost" onClick={handleSnoozeNudge}>
+                  💤 Snooze nudge
+                </button>
+              )}
             </div>
           </div>
 

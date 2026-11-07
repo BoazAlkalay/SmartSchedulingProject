@@ -169,4 +169,16 @@ Last updated: 2026-04-19
 
 ## Daily Nudge
 **Purpose:** A recurring Google Calendar event ("SmartScheduler: plan your day") whose popup prompts you to open the app. Lives in Google Calendar, so it fires even when the desktop is off.
-**Set up:** web app > Manage > "Daily nudge" (enter a 24-hour time, blank turns it off). API: POST `/daily-nudge` `{"enabled": true, "time": "10:05"}`.
+**Set up:** web app > Manage > "Daily nudge" (enter a 24-hour time, blank turns it off). API: POST `/daily-nudge` `{"enabled": true, "time": "08:30"}`.
+**Snooze (e.g. you're up until 5:30am):** web app > Manage > "Snooze nudge" (minutes later like `180`, or a time like `11:30`). It moves only the next nudge; every other day stays at the usual time. API: POST `/daily-nudge/snooze` `{"minutes": 180}` or `{"time": "11:30"}`.
+
+## Nudge Alarm + Snooze Nudge (two Shortcuts)
+**Not yet tested on a device.** The Clock alarm lives on the phone, so the Shortcut sets it itself and only *then* asks the desktop to move the calendar event.
+**Nudge Alarm** (run by a Time of Day automation, e.g. 8:00pm, or by hand):
+1. Find Calendar Events -- Title is "SmartScheduler: plan your day", sorted by Start Date, limit 1.
+2. Create Alarm at that event's Start Date (one-off, not repeating). Because it reads the event itself, a snoozed nudge gives a snoozed alarm.
+**Snooze Nudge** (a button, like the ones on your Shortcuts screen):
+1. Ask for Input (number): "Snooze how many minutes?"
+2. Adjust Date: Current Date plus that many minutes -> Create Alarm at that time.
+3. Last, best effort: POST `http://<desktop>:8000/daily-nudge/snooze` with `{"minutes": <input>}`.
+Open question for the device: whether Shortcuts can turn off the earlier alarm. If it can't, delete or switch off the old one by hand.

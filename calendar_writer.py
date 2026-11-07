@@ -590,6 +590,88 @@ def set_daily_nudge(time_str: str) -> dict:
     return {"status": "on", "time": f"{hour:02d}:{minute:02d}"}
 
 
+def snooze_daily_nudge(minutes: int = None, time_str: str = None) -> dict:
+    """
+    Move ONLY the next daily nudge, e.g. when you're up until 5:30am and
+    8:30 is no use. Google keeps every other day on the usual schedule,
+    because only that one occurrence of the recurring event is changed.
+
+    minutes: push the next nudge later by this many minutes.
+    time_str: or move it to this 24-hour "HH:MM" on the day it was due.
+    Give one of the two. The nudge's 10-minute length is kept.
+    """
+    import json
+
+    if (minutes is None) == (time_str is None):
+        return {"status": "error", "message": "Give either minutes or a time, not both."}
+    if minutes is not None and not (0 < minutes <= 24 * 60):
+        return {"status": "error", "message": "Minutes must be between 1 and 1440."}
+
+    new_clock = None
+    if time_str is not None:
+        try:
+            hour, minute = (int(p) for p in time_str.strip().split(":"))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+            new_clock = (hour, minute)
+        except (ValueError, AttributeError):
+            return {"status": "error", "message": f"Couldn't read {time_str!r} as HH:MM."}
+
+    try:
+        with open(NUDGE_FILE, "r", encoding="utf-8") as f:
+            event_id = json.load(f).get("event_id")
+    except (OSError, ValueError):
+        event_id = None
+    if not event_id:
+        return {"status": "off", "message": "The daily nudge isn't turned on."}
+
+    service = get_personal_service()
+    now = datetime.now().astimezone()
+    # The next occurrence that hasn't happened yet, looking a couple of days
+    # ahead (and a little back, so a nudge that's mid-popup can be moved).
+    instances = (
+        service.events()
+        .instances(
+            calendarId="primary",
+            eventId=event_id,
+            timeMin=(now - timedelta(minutes=30)).isoformat(),
+            timeMax=(now + timedelta(days=3)).isoformat(),
+            maxResults=5,
+        )
+        .execute()
+        .get("items", [])
+    )
+    instances = [i for i in instances if i.get("status") != "cancelled"]
+    if not instances:
+        return {"status": "error", "message": "Couldn't find the next nudge on your calendar."}
+
+    nxt = instances[0]
+    # "originalStartTime" is where the schedule says it belongs; "start" is
+    # where it sits now (they differ if it was already moved once).
+    current_start = datetime.fromisoformat(nxt["start"]["dateTime"])
+    if minutes is not None:
+        new_start = current_start + timedelta(minutes=minutes)
+    else:
+        new_start = current_start.replace(
+            hour=new_clock[0], minute=new_clock[1], second=0, microsecond=0
+        )
+    new_end = new_start + timedelta(minutes=10)
+
+    service.events().patch(
+        calendarId="primary",
+        eventId=nxt["id"],
+        body={
+            "start": {"dateTime": new_start.isoformat(), "timeZone": "America/New_York"},
+            "end": {"dateTime": new_end.isoformat(), "timeZone": "America/New_York"},
+        },
+    ).execute()
+    return {
+        "status": "moved",
+        "from": current_start.strftime("%Y-%m-%d %H:%M"),
+        "to": new_start.strftime("%Y-%m-%d %H:%M"),
+    }
+
+
 def clear_daily_nudge() -> dict:
     """Delete the daily nudge event and forget it."""
     import json

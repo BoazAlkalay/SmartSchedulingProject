@@ -803,7 +803,7 @@ def retry_endpoint(request: RetryRequest):
 
 class DailyNudgeRequest(BaseModel):
     enabled: bool
-    time: Optional[str] = "10:05"  # 24-hour HH:MM; just after the 10am Downtime ends
+    time: Optional[str] = "08:30"  # 24-hour HH:MM
 
 
 @app.get("/daily-nudge")
@@ -824,11 +824,34 @@ def daily_nudge_endpoint(request: DailyNudgeRequest):
         from calendar_writer import set_daily_nudge, clear_daily_nudge
 
         if request.enabled:
-            result = set_daily_nudge(request.time or "10:05")
+            result = set_daily_nudge(request.time or "08:30")
             if result.get("status") == "error":
                 raise HTTPException(status_code=400, detail=result["message"])
             return result
         return clear_daily_nudge()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SnoozeNudgeRequest(BaseModel):
+    # Exactly one of these: push the next nudge back by N minutes, or move
+    # it to a clock time ("HH:MM", 24-hour) on the day it was due.
+    minutes: Optional[int] = None
+    time: Optional[str] = None
+
+
+@app.post("/daily-nudge/snooze")
+def snooze_daily_nudge_endpoint(request: SnoozeNudgeRequest):
+    """Move only the next daily nudge, leaving the daily schedule alone."""
+    try:
+        from calendar_writer import snooze_daily_nudge
+
+        result = snooze_daily_nudge(request.minutes, request.time)
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result["message"])
+        return result
     except HTTPException:
         raise
     except Exception as e:
