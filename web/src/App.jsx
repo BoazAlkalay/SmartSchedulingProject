@@ -41,6 +41,7 @@ function App() {
   const [editingProposal, setEditingProposal] = useState(null);
   const [habitBadgeCount, setHabitBadgeCount] = useState(0);
   const [panicUndoCount, setPanicUndoCount] = useState(0);
+  const [nudge, setNudge] = useState({ enabled: false, time: null });
   const [showHabits, setShowHabits] = useState(false);
   const [openBasket, setOpenBasket] = useState(null);
   const [hoveredEnergy, setHoveredEnergy] = useState(null);
@@ -56,6 +57,34 @@ function App() {
   useEffect(() => {
     refreshPanicStatus();
   }, [refreshPanicStatus]);
+
+  // The daily "plan your day" calendar event: on/off and its time.
+  useEffect(() => {
+    fetch(`${API}/daily-nudge`)
+      .then((r) => r.json())
+      .then(setNudge)
+      .catch(() => {});
+  }, []);
+
+  async function handleNudge() {
+    const input = prompt(
+      "Daily \"plan your day\" reminder time (24-hour, e.g. 10:05).\nLeave blank to turn it off.",
+      nudge.time || "10:05",
+    );
+    if (input === null) return; // cancelled
+    const text = input.trim();
+    const res = await fetch(`${API}/daily-nudge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !!text, time: text || null }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.detail || "Couldn't update the daily reminder.");
+      return;
+    }
+    setNudge({ enabled: data.status === "on", time: data.time || null });
+  }
 
   const handleRefresh = useCallback(() => {
     calendarGridRef.current?.refresh();
@@ -472,6 +501,9 @@ function App() {
                   🔁 Habits {habitBadgeCount > 0 && `(${habitBadgeCount})`}
                 </button>
               )}
+              <button className="btn-ghost" onClick={handleNudge}>
+                ⏰ Daily nudge: {nudge.enabled ? nudge.time : "off"}
+              </button>
             </div>
           </div>
 

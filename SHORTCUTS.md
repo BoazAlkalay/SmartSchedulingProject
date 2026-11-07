@@ -152,3 +152,21 @@ Last updated: 2026-04-19
 ## Planned Shortcuts (Not Yet Built)
 - **Schedule Next / Queue Next** — schedule a task after the current contiguous block
 - **Unschedule Task** — clear a task's schedule without setting a retry time
+
+## Up Next Alarm
+**Purpose:** Make the phone itself prompt you, with a real Clock alarm (rings through silent mode) and a notification, instead of relying on opening the app.
+**Not yet tested on a device** -- written from the Shortcuts action names, so adjust to what your iOS version shows.
+**Order matters:** Shortcuts has no try/catch, so a failed request to the desktop ends the shortcut with an error. Do the parts that don't need the desktop first.
+**Flow:**
+1. Find Calendar Events -- Start Date is in the next 2 hours, sorted by Start Date, limit 1.
+   (Needs your Google account added under Settings > Calendar > Accounts so its events appear in iOS Calendar. Scheduled tasks are mirrored there.)
+2. If found: Adjust Date (Start Date minus 10 minutes) -> Create Alarm at that time.
+3. Best effort, last: GET `http://<desktop>:8000/next-up` -> Get Dictionary Value `planned_unscheduled_today.count`.
+   If it is above 0, Show Notification: "N planned today, none scheduled".
+   (`/next-up` also returns `next[0].alarm_at`, the start minus that task's own reminder lead, if you prefer to alarm from the app's data when the desktop is reachable.)
+**Run it automatically:** Shortcuts > Automation > Time of Day (e.g. every morning and a few times a day), set to Run Immediately.
+**Screen Time:** Settings > Screen Time > Always Allowed -- add Shortcuts and Calendar (and Clock if listed) so Downtime (10pm-10am) doesn't grey them out.
+
+## Daily Nudge
+**Purpose:** A recurring Google Calendar event ("SmartScheduler: plan your day") whose popup prompts you to open the app. Lives in Google Calendar, so it fires even when the desktop is off.
+**Set up:** web app > Manage > "Daily nudge" (enter a 24-hour time, blank turns it off). API: POST `/daily-nudge` `{"enabled": true, "time": "10:05"}`.

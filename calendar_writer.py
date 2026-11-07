@@ -4,9 +4,13 @@ from calendar_reader import get_todays_events, get_free_slots
 import frontmatter
 import math
 from pathlib import Path
-from config import TASKS, INBOX
+from config import TASKS, INBOX, VAULT_PATH
 
 BUFFER_MINUTES = 5
+
+# Where the daily "plan your day" nudge event's id and time are remembered.
+NUDGE_FILE = VAULT_PATH / "system" / "daily_nudge.json"
+NUDGE_TITLE = "SmartScheduler: plan your day"
 
 
 def round_to_5_minutes(dt):
@@ -227,8 +231,29 @@ def check_slot_conflict(start_iso: str, end_iso: str) -> dict:
     return {"conflict": False, "conflicting_event": None}
 
 
+def reminder_minutes(energy: str = "", fixed: bool = False) -> list:
+    """
+    How many minutes before a scheduled task its reminders fire, longest
+    first. A fixed-time task (an appointment with an explicit start time)
+    gets earlier warnings than its energy level alone would give, since
+    it can't be moved and usually needs getting ready or travelling.
+    """
+    if fixed:
+        return [30, 10]
+    if energy in ("deep", "high"):
+        return [20, 5]
+    if energy in ("cantrip", "low"):
+        return [5]
+    return [10]  # medium or unknown
+
+
 def create_calendar_event(
-    title: str, start_iso: str, end_iso: str, description: str = "", energy: str = ""
+    title: str,
+    start_iso: str,
+    end_iso: str,
+    description: str = "",
+    energy: str = "",
+    fixed: bool = False,
 ) -> str:
     """
     Create an event on the personal Google Calendar.
@@ -236,30 +261,13 @@ def create_calendar_event(
     """
     service = get_personal_service()
 
-    # Set reminders based on energy level
-    if energy in ("deep", "high"):
-        reminders = {
-            "useDefault": False,
-            "overrides": [
-                {"method": "popup", "minutes": 20},
-                {"method": "popup", "minutes": 5},
-            ],
-        }
-    elif energy in ("cantrip", "low"):
-        reminders = {
-            "useDefault": False,
-            "overrides": [
-                {"method": "popup", "minutes": 5},
-            ],
-        }
-    else:
-        # medium or unknown — 10 min
-        reminders = {
-            "useDefault": False,
-            "overrides": [
-                {"method": "popup", "minutes": 10},
-            ],
-        }
+    reminders = {
+        "useDefault": False,
+        "overrides": [
+            {"method": "popup", "minutes": m}
+            for m in reminder_minutes(energy, fixed)
+        ],
+    }
 
     event = {
         "summary": title,
@@ -455,6 +463,7 @@ def schedule_task(
 
     # Delete existing calendar event if one exists + get energy level
     task_energy = ""
+    task_fixed = False
     all_files = list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md"))
     for filepath in all_files:
         post = frontmatter.load(filepath)
@@ -463,6 +472,8 @@ def schedule_task(
             if existing_event_id:
                 delete_calendar_event(existing_event_id)
             task_energy = post.metadata.get("energy_required", "")
+            # An explicit "at X" start time means a fixed appointment.
+            task_fixed = bool(post.metadata.get("parsed_datetime"))
             break
 
     # Create the calendar event
@@ -475,6 +486,7 @@ def schedule_task(
             end_iso=slot["end_iso"],
             description="Scheduled by SmartScheduler",
             energy=task_energy,
+            fixed=task_fixed,
         )
     except Exception as e:
         print(f"Warning: could not create calendar event for '{task_title}': {e}")
@@ -506,6 +518,96 @@ def schedule_task(
             "event_id": None,
             "message": f"Scheduled '{task_title}' locally for {date_str} from {slot['start']} to {slot['end']}, but couldn't sync to Google Calendar right now — will need to be re-synced later.",
         }
+
+
+def daily_nudge_status() -> dict:
+    """{"enabled": bool, "time": "HH:MM" or None} for the daily nudge event."""
+    import json
+
+    try:
+        with open(NUDGE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {"enabled": True, "time": data.get("time")}
+    except (OSError, ValueError):
+        return {"enabled": False, "time": None}
+
+
+def set_daily_nudge(time_str: str) -> dict:
+    """
+    Create (or move) a recurring daily Google Calendar event with a popup at
+    its start, so the phone prompts you to plan the day even when the
+    desktop running this app is off. Idempotent: the event id is remembered,
+    so calling again just changes the time rather than adding a second one.
+    time_str is 24-hour "HH:MM".
+    """
+    import json
+
+    try:
+        hour, minute = (int(p) for p in time_str.strip().split(":"))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+    except (ValueError, AttributeError):
+        return {"status": "error", "message": f"Couldn't read {time_str!r} as HH:MM."}
+
+    service = get_personal_service()
+    start = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0)
+    end = start + timedelta(minutes=10)
+    body = {
+        "summary": NUDGE_TITLE,
+        "description": (
+            "Open SmartScheduler: look at what's planned or suggested for "
+            "today and schedule what you'll actually do."
+        ),
+        "start": {"dateTime": start.isoformat(), "timeZone": "America/New_York"},
+        "end": {"dateTime": end.isoformat(), "timeZone": "America/New_York"},
+        "recurrence": ["RRULE:FREQ=DAILY"],
+        "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 0}]},
+    }
+
+    event_id = None
+    try:
+        with open(NUDGE_FILE, "r", encoding="utf-8") as f:
+            event_id = json.load(f).get("event_id")
+    except (OSError, ValueError):
+        pass
+
+    saved = None
+    if event_id:
+        try:
+            saved = (
+                service.events()
+                .update(calendarId="primary", eventId=event_id, body=body)
+                .execute()
+            )
+        except Exception as e:
+            print(f"Daily nudge event couldn't be updated ({e}); creating a new one")
+    if saved is None:
+        saved = service.events().insert(calendarId="primary", body=body).execute()
+
+    NUDGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(NUDGE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"event_id": saved["id"], "time": f"{hour:02d}:{minute:02d}"}, f)
+    return {"status": "on", "time": f"{hour:02d}:{minute:02d}"}
+
+
+def clear_daily_nudge() -> dict:
+    """Delete the daily nudge event and forget it."""
+    import json
+
+    try:
+        with open(NUDGE_FILE, "r", encoding="utf-8") as f:
+            event_id = json.load(f).get("event_id")
+    except (OSError, ValueError):
+        return {"status": "off"}
+    if event_id:
+        try:
+            get_personal_service().events().delete(
+                calendarId="primary", eventId=event_id
+            ).execute()
+        except Exception as e:
+            print(f"Daily nudge event already gone or couldn't be deleted: {e}")
+    NUDGE_FILE.unlink(missing_ok=True)
+    return {"status": "off"}
 
 
 def truncate_calendar_event(

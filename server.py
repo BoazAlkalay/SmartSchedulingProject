@@ -801,6 +801,110 @@ def retry_endpoint(request: RetryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class DailyNudgeRequest(BaseModel):
+    enabled: bool
+    time: Optional[str] = "10:05"  # 24-hour HH:MM; just after the 10am Downtime ends
+
+
+@app.get("/daily-nudge")
+def daily_nudge_status_endpoint():
+    """Whether the daily "plan your day" calendar event is on, and when."""
+    try:
+        from calendar_writer import daily_nudge_status
+
+        return daily_nudge_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/daily-nudge")
+def daily_nudge_endpoint(request: DailyNudgeRequest):
+    """Turn the daily nudge on (at `time`) or off. Safe to call repeatedly."""
+    try:
+        from calendar_writer import set_daily_nudge, clear_daily_nudge
+
+        if request.enabled:
+            result = set_daily_nudge(request.time or "10:05")
+            if result.get("status") == "error":
+                raise HTTPException(status_code=400, detail=result["message"])
+            return result
+        return clear_daily_nudge()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/next-up")
+def next_up_endpoint(limit: int = 3):
+    """
+    What's coming next, for the iPhone "Up Next" Shortcut: the next scheduled
+    tasks (soonest first) with a suggested alarm time -- the start minus the
+    task's own longest reminder lead -- plus any block running right now and
+    how many tasks are planned for today but not scheduled yet. Blocks that
+    already started are listed under "running", never "next", so every
+    alarm_at in "next" is still in the future. Plain Python, no LLM.
+    """
+    try:
+        from datetime import datetime, timedelta
+        from config import TASKS, INBOX
+        from calendar_writer import reminder_minutes
+        from task_entry import compute_scheduled_start, compute_scheduled_end
+        import frontmatter
+
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        upcoming = []
+        running = []
+        planned_unscheduled = []
+
+        for filepath in list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md")):
+            meta = frontmatter.load(filepath).metadata
+            title = meta.get("title")
+            status = meta.get("status", "")
+            if not title or status == "done":
+                continue
+
+            start = compute_scheduled_start(meta)
+            if start is not None:
+                # Skip blocks that ended already; keep one in progress.
+                end_iso = compute_scheduled_end(meta)
+                if end_iso and datetime.fromisoformat(end_iso) < now:
+                    continue
+                if start <= now:
+                    running.append({"title": title, "ends": end_iso})
+                    continue
+                lead = reminder_minutes(
+                    meta.get("energy_required", ""),
+                    fixed=bool(meta.get("parsed_datetime")),
+                )[0]
+                upcoming.append(
+                    {
+                        "title": title,
+                        "start": start.strftime("%Y-%m-%dT%H:%M"),
+                        "minutes_until": int((start - now).total_seconds() // 60),
+                        "alarm_at": (start - timedelta(minutes=lead)).strftime(
+                            "%Y-%m-%dT%H:%M"
+                        ),
+                        "energy": meta.get("energy_required", ""),
+                    }
+                )
+            elif status != "scheduled" and str(meta.get("planned_date") or "")[:10] == today:
+                planned_unscheduled.append(title)
+
+        upcoming.sort(key=lambda t: t["start"])
+        return {
+            "next": upcoming[: max(limit, 1)],
+            "running": running,
+            "planned_unscheduled_today": {
+                "count": len(planned_unscheduled),
+                "titles": planned_unscheduled[:5],
+            },
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/panic-status")
 def panic_status_endpoint():
     """Whether the last panic can still be undone, and how many tasks it holds."""
