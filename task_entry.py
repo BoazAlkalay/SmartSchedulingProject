@@ -184,6 +184,68 @@ def _reclassify_ambiguous_deadline_as_start(task_data: dict, raw_text: str) -> N
     task_data["deadline_buffer_minutes"] = None
 
 
+_FIXED_TIME_RE = re.compile(r"\bfixed\b", re.IGNORECASE)
+
+
+def _pin_fixed_time_task(task_data: dict) -> None:
+    """
+    A fixed-time task ("PT appointment, fixed at 8:45am") starts at one
+    exact time and runs for its duration, so it ENDS at start + duration.
+    The LLM often puts that start time into `deadline` instead, and
+    _compute_suggested_start then reads the deadline as a finish-by time
+    and back-calculates a start that contradicts the fixed time (8:45
+    deadline - 45min = a suggested start of 8:00).
+
+    Treat the task as fixed-time when its deadline carries a time AND
+    either (a) parsed_datetime is the same moment, or (b) the scheduling
+    instructions call it "fixed". Then:
+      - parsed_datetime = that start time (the field the scheduler honors)
+      - deadline = start + duration, i.e. the real finish-by time
+    so _compute_suggested_start lands on the fixed start (minus any
+    travel/prep buffer, which is the leave-by time).
+
+    Deliberately NOT applied to a task that only has parsed_datetime and
+    no deadline -- that stays deadline-free (see the prompt's doctor's-
+    appointment rule: a wrongly-invented deadline is worse than none).
+    """
+    deadline = task_data.get("deadline")
+    if not deadline or "T" not in str(deadline):
+        return
+
+    try:
+        start_dt = datetime.fromisoformat(str(deadline))
+    except (ValueError, TypeError):
+        return
+
+    parsed = task_data.get("parsed_datetime")
+    same_as_parsed = False
+    if parsed:
+        try:
+            same_as_parsed = datetime.fromisoformat(str(parsed)).replace(
+                second=0, microsecond=0
+            ) == start_dt.replace(second=0, microsecond=0)
+        except (ValueError, TypeError):
+            same_as_parsed = False
+
+    says_fixed = bool(
+        _FIXED_TIME_RE.search(task_data.get("scheduling_instructions") or "")
+    )
+
+    if not (same_as_parsed or (says_fixed and not parsed)):
+        return
+
+    duration_minutes = parse_duration_to_minutes(
+        task_data.get("duration_estimated", "")
+    )
+    end_dt = start_dt + timedelta(minutes=duration_minutes)
+
+    if not parsed:
+        task_data["parsed_datetime"] = start_dt.strftime("%Y-%m-%dT%H:%M:00")
+    if not task_data.get("planned_date"):
+        task_data["planned_date"] = start_dt.strftime("%Y-%m-%d")
+    task_data["deadline"] = end_dt.strftime("%Y-%m-%dT%H:%M")
+
+
 _WINDOW_PHRASE_RE = re.compile(
     r"\bwithin\s+(the\s+)?next\s+\d+\s+days?\b"
     r"|\bwithin\s+\d+\s+days?\b"
@@ -312,6 +374,22 @@ def _compute_suggested_start(task_data: dict, now: datetime) -> None:
         task_data["minutes_late_if_now"] = None
 
 
+def _postprocess_parsed_tasks(tasks: list, raw_text: str, now: datetime) -> None:
+    """
+    The deterministic Python guards that run on every LLM-parsed task, in
+    order. One shared function so parse_task_from_text() (Add Task preview)
+    and add_task() (text-only path, e.g. Shortcuts) can't drift apart --
+    add_task() previously ran only the suggested-start step, so it skipped
+    the deadline guards and silently dropped planned windows.
+    """
+    for t in tasks:
+        _reclassify_ambiguous_deadline_as_start(t, raw_text)
+        _pin_fixed_time_task(t)
+        _loosen_window_deadline(t, raw_text)
+        _resolve_planned_window(t)
+        _compute_suggested_start(t, now)
+
+
 def parse_task_from_text(raw_text: str) -> dict:
     """
     Takes natural language input and returns a structured task dictionary
@@ -331,11 +409,7 @@ def parse_task_from_text(raw_text: str) -> dict:
         print(f"Raw response: {response}")
         return None
 
-    for t in tasks:
-        _reclassify_ambiguous_deadline_as_start(t, raw_text)
-        _loosen_window_deadline(t, raw_text)
-        _resolve_planned_window(t)
-        _compute_suggested_start(t, now)
+    _postprocess_parsed_tasks(tasks, raw_text, now)
 
     return tasks[0] if len(tasks) == 1 else tasks
 
@@ -641,8 +715,7 @@ def add_task(raw_text: str, apply_suggested_dates: bool = True) -> list:
         print("Failed to parse task(s). Please try again.")
         return []
 
-    for t in task_list:
-        _compute_suggested_start(t, now)
+    _postprocess_parsed_tasks(task_list, raw_text, now)
 
     return create_tasks_from_parsed(
         task_list, apply_suggested_dates=apply_suggested_dates

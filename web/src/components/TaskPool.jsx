@@ -14,6 +14,19 @@ function effectivePlannedDate(task) {
   return task.planned_date || task.planned_window_start || null;
 }
 
+// "Suggested Soon": a task with a flexible planned window (no pinned
+// planned_date) whose window includes today. It isn't planned for a day
+// or scheduled, so it would otherwise sink into Backlog -- which is easy
+// to scroll past, and hidden entirely by the Focused filter -- even though
+// its window says "do this around now". Dates are YYYY-MM-DD strings, so
+// plain string comparison is correct.
+function isSuggestedSoon(task, todayStr) {
+  if (task.planned_date) return false;
+  const start = task.planned_window_start;
+  const end = task.planned_window_end;
+  return !!(start && end && start <= todayStr && todayStr <= end);
+}
+
 const ENERGY_COLORS = {
   cantrip: "#A8C5D6",
   low: "#6BAF92",
@@ -193,6 +206,8 @@ const ENERGY_ORDER = { deep: 0, high: 1, medium: 2, low: 3, cantrip: 4 };
 // (see the bucketing just above the render in TaskPool):
 //   Due Today      deadline is today
 //   Recently Due   1 to RECENTLY_DUE_DAYS days late
+//   Suggested Soon would-be Backlog task whose flexible planned window
+//                  includes today (see isSuggestedSoon)
 //   Due Soon       due in 1 to DUE_SOON_DAYS days
 //   Overdue        more than RECENTLY_DUE_DAYS days late
 //   Backlog        no deadline, or due further out than DUE_SOON_DAYS
@@ -729,7 +744,12 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
             u &&
             u.days <= 7;
           const plannedToday = t.planned_date === todayStr;
-          return dueSoon || highPriorityAndNear || plannedToday;
+          return (
+            dueSoon ||
+            highPriorityAndNear ||
+            plannedToday ||
+            isSuggestedSoon(t, todayStr)
+          );
         });
       default:
         return taskList;
@@ -795,15 +815,27 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
   const buckets = {
     dueToday: [],
     recentlyDue: [],
+    suggestedSoon: [],
     dueSoon: [],
     overdue: [],
     backlog: [],
     muted: [],
   };
-  unscheduledAll.forEach((t) =>
-    buckets[t.muted && isMutable(t) ? "muted" : deadlineBucket(t)].push(t),
+  unscheduledAll.forEach((t) => {
+    if (t.muted && isMutable(t)) return buckets.muted.push(t);
+    const b = deadlineBucket(t);
+    // Only lifts tasks out of Backlog; a task with a real deadline stays in
+    // its deadline section.
+    buckets[
+      b === "backlog" && isSuggestedSoon(t, todayStr) ? "suggestedSoon" : b
+    ].push(t);
+  });
+  // Window closing soonest first.
+  buckets.suggestedSoon.sort((a, b) =>
+    a.planned_window_end.localeCompare(b.planned_window_end),
   );
-  const { dueToday, recentlyDue, dueSoon, overdue, backlog } = buckets;
+  const { dueToday, recentlyDue, suggestedSoon, dueSoon, overdue, backlog } =
+    buckets;
   const mutedTasks = buckets.muted;
 
   // How many current tasks the active filter is hiding. Shown as a one-line
@@ -934,6 +966,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
             Each task is in exactly one of these or in Backlog. */}
         {renderSection("🎯 Due Today", dueToday, "#C4832A")}
         {renderSection("⏳ Recently Due", recentlyDue, "#8B2E2E")}
+        {renderSection("💡 Suggested Soon", suggestedSoon, "#6BAF92")}
         {renderSection("⏰ Due Soon", dueSoon, "#D4A843")}
         {renderSection("🚨 Overdue", overdue, "#6B6560")}
 
