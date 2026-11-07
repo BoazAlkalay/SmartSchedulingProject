@@ -1,6 +1,6 @@
 import frontmatter
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from vault_reader import read_tasks
 from llm import ask
 from config import INBOX, TASKS, SCHEDULED, CHECKINS
@@ -132,10 +132,160 @@ def is_muted(metadata: dict, now: datetime = None) -> bool:
     return True
 
 
+def _panic_snapshot_path():
+    from config import VAULT_PATH
+
+    return VAULT_PATH / "system" / "last_panic.json"
+
+
+def _next_day_boundary(now: datetime) -> datetime:
+    """The next 3am -- the app's day boundary (see effective_now)."""
+    boundary = now.replace(hour=3, minute=0, second=0, microsecond=0)
+    if boundary <= now:
+        boundary += timedelta(days=1)
+    return boundary
+
+
+def _read_panic_snapshot():
+    """The saved pre-panic snapshot, or None if missing, unreadable or expired."""
+    import json
+
+    path = _panic_snapshot_path()
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            snap = json.load(f)
+        if datetime.fromisoformat(snap["expires"]) <= datetime.now():
+            return None
+        if not snap.get("tasks"):
+            return None
+        return snap
+    except (ValueError, KeyError, OSError):
+        return None
+
+
+def _write_panic_snapshot(entries: list, now: datetime) -> None:
+    """
+    Save what a panic is about to reset so undo_panic() can put it back.
+    Merges into a still-valid earlier snapshot, so pressing Panic twice
+    doesn't make the first one un-undoable. Expires at the next 3am.
+    """
+    import json
+
+    existing = _read_panic_snapshot()
+    merged = list(existing["tasks"]) if existing else []
+    seen = {e.get("id") or e.get("title") for e in merged}
+    for entry in entries:
+        key = entry.get("id") or entry.get("title")
+        if key not in seen:
+            merged.append(entry)
+            seen.add(key)
+
+    path = _panic_snapshot_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "created": now.isoformat(),
+                "expires": _next_day_boundary(now).isoformat(),
+                "tasks": merged,
+            },
+            f,
+            indent=2,
+        )
+
+
+def panic_undo_status() -> dict:
+    snap = _read_panic_snapshot()
+    return {"available": bool(snap), "count": len(snap["tasks"]) if snap else 0}
+
+
+def undo_panic() -> dict:
+    """
+    Put back what the last panic reset: re-book each task at its original
+    date and time and restore its deferral count. Tasks that were
+    rescheduled, completed or deleted since are skipped; any that fail to
+    re-book stay in the snapshot so undo can be retried.
+    """
+    import json
+
+    snap = _read_panic_snapshot()
+    if not snap:
+        return {"status": "none", "message": "Nothing to undo."}
+
+    from calendar_writer import schedule_task
+    from split_task import parse_duration_to_minutes
+
+    restored = 0
+    skipped = 0
+    failed = []
+
+    for entry in snap["tasks"]:
+        filepath = (
+            find_task_by_id(entry["id"])
+            if entry.get("id")
+            else find_task_file(entry.get("title", ""))
+        )
+        if not filepath:
+            skipped += 1
+            continue
+        post = frontmatter.load(filepath)
+        if post.metadata.get("status") != "unscheduled":
+            skipped += 1  # already rescheduled, started or finished since
+            continue
+
+        minutes = parse_duration_to_minutes(entry.get("duration") or "") or 60
+        title = post.metadata.get("title", entry.get("title", ""))
+        try:
+            result = schedule_task(
+                task_title=title,
+                duration_minutes=minutes,
+                preferred_start=entry.get("scheduled_time"),
+                preferred_date=entry.get("scheduled_date"),
+            )
+        except Exception as e:
+            print(f"Undo panic: could not re-book '{title}': {e}")
+            result = {}
+        if str(result.get("status", "")).startswith("scheduled"):
+            update_task_file(filepath, {"times_deferred": entry.get("times_deferred", 0)})
+            restored += 1
+        else:
+            failed.append(entry)
+
+    path = _panic_snapshot_path()
+    if failed:
+        snap["tasks"] = failed
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(snap, f, indent=2)
+    else:
+        path.unlink(missing_ok=True)
+
+    create_checkin(
+        doing="undid panic reset",
+        energy="unknown",
+        notes=f"restored {restored} task(s)",
+    )
+
+    parts = [f"Restored {restored} task(s)."]
+    if skipped:
+        parts.append(f"{skipped} skipped (already rescheduled or finished).")
+    if failed:
+        parts.append(f"{len(failed)} couldn't be re-booked; Undo is still available.")
+    return {
+        "status": "undone",
+        "restored": restored,
+        "skipped": skipped,
+        "failed": len(failed),
+        "message": " ".join(parts),
+    }
+
+
 def panic_button(reason: str = "") -> str:
     """
     Panic button - nothing gets done, redistribute without judgment.
     Marks all scheduled tasks as unscheduled and resets their schedules.
+    Saves a snapshot first so the reset can be undone (see undo_panic).
     """
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
@@ -143,31 +293,54 @@ def panic_button(reason: str = "") -> str:
 
     all_files = list(TASKS.rglob("*.md")) + list(INBOX.rglob("*.md"))
 
+    # First pass: find what this panic will reset and snapshot it BEFORE
+    # touching anything, so even a failure part-way through leaves an undo.
+    to_reset = []
+    snapshot_entries = []
     for filepath in all_files:
         post = frontmatter.load(filepath)
+        if post.metadata.get("status") != "scheduled":
+            continue
+        # make sure to only reset tasks scheduled today
+        scheduled_date = post.metadata.get("scheduled_date", today_str)
+        if scheduled_date != today_str:
+            continue
+        to_reset.append((filepath, post, scheduled_date))
+        if post.metadata.get("scheduled_time"):
+            snapshot_entries.append(
+                {
+                    "id": post.metadata.get("id"),
+                    "title": post.metadata.get("title", ""),
+                    "scheduled_time": post.metadata.get("scheduled_time"),
+                    "scheduled_date": str(scheduled_date),
+                    "duration": post.metadata.get("scheduled_duration")
+                    or post.metadata.get("duration_estimated", ""),
+                    "times_deferred": post.metadata.get("times_deferred", 0),
+                }
+            )
+    if snapshot_entries:
+        try:
+            _write_panic_snapshot(snapshot_entries, now)
+        except OSError as e:
+            print(f"Warning: could not save panic undo snapshot: {e}")
 
-        if post.metadata.get("status") == "scheduled":
-            # make sure to only reset tasks scheduled today
-            scheduled_date = post.metadata.get("scheduled_date", today_str)
-            if scheduled_date != today_str:
-                continue
+    for filepath, post, _scheduled_date in to_reset:
+        # Delete calendar event before clearing ID
+        event_id = post.metadata.get("calendar_event_id")
+        if event_id:
+            from calendar_writer import delete_calendar_event
 
-            # Delete calendar event before clearing ID
-            event_id = post.metadata.get("calendar_event_id")
-            if event_id:
-                from calendar_writer import delete_calendar_event
+            delete_calendar_event(event_id)
 
-                delete_calendar_event(event_id)
-
-            updates = {
-                "status": "unscheduled",
-                "scheduled_time": None,
-                "scheduled_date": None,
-                "calendar_event_id": None,
-                "times_deferred": post.metadata.get("times_deferred", 0) + 1,
-            }
-            update_task_file(filepath, updates)
-            reset_count += 1
+        updates = {
+            "status": "unscheduled",
+            "scheduled_time": None,
+            "scheduled_date": None,
+            "calendar_event_id": None,
+            "times_deferred": post.metadata.get("times_deferred", 0) + 1,
+        }
+        update_task_file(filepath, updates)
+        reset_count += 1
 
     # Log a checkin
     create_checkin(

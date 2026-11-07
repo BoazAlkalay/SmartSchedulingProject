@@ -800,6 +800,28 @@ def retry_endpoint(request: RetryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/panic-status")
+def panic_status_endpoint():
+    """Whether the last panic can still be undone, and how many tasks it holds."""
+    try:
+        from reschedule import panic_undo_status
+
+        return panic_undo_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/undo-panic")
+def undo_panic_endpoint():
+    """Put back the tasks the last panic reset (until the next 3am)."""
+    try:
+        from reschedule import undo_panic
+
+        return undo_panic()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/panic")
 def panic_endpoint(request: PanicRequest):
     """Panic button — reset everything without judgment."""

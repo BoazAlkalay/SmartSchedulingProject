@@ -40,9 +40,22 @@ function App() {
   const [proposalCount, setProposalCount] = useState(0);
   const [editingProposal, setEditingProposal] = useState(null);
   const [habitBadgeCount, setHabitBadgeCount] = useState(0);
+  const [panicUndoCount, setPanicUndoCount] = useState(0);
   const [showHabits, setShowHabits] = useState(false);
   const [openBasket, setOpenBasket] = useState(null);
   const [hoveredEnergy, setHoveredEnergy] = useState(null);
+
+  // How many tasks the last panic can still put back (0 = nothing to undo).
+  const refreshPanicStatus = useCallback(() => {
+    fetch(`${API}/panic-status`)
+      .then((r) => r.json())
+      .then((d) => setPanicUndoCount(d.available ? d.count : 0))
+      .catch(() => setPanicUndoCount(0));
+  }, []);
+
+  useEffect(() => {
+    refreshPanicStatus();
+  }, [refreshPanicStatus]);
 
   const handleRefresh = useCallback(() => {
     calendarGridRef.current?.refresh();
@@ -462,6 +475,21 @@ function App() {
             </div>
           </div>
 
+          {panicUndoCount > 0 && (
+            <button
+              className="btn-ghost"
+              onClick={async () => {
+                const res = await fetch(`${API}/undo-panic`, { method: "POST" });
+                const data = await res.json().catch(() => ({}));
+                // Only interrupt when something didn't go back as it was.
+                if (data.skipped || data.failed) alert(data.message);
+                refreshPanicStatus();
+                handleRefresh();
+              }}
+            >
+              ↩ Undo panic ({panicUndoCount})
+            </button>
+          )}
           <button
             className="btn-danger quick-panel-panic"
             onClick={async () => {
@@ -471,6 +499,7 @@ function App() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ reason: "manual reset from web app" }),
               });
+              refreshPanicStatus();
               handleRefresh();
             }}
           >
