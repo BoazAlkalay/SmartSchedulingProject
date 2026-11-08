@@ -12,8 +12,52 @@ const API = `http://${window.location.hostname}:8000`;
 // suppression, the Planned for Later list), it falls back to the window's
 // start so a windowed task behaves like a planned one pinned to its
 // earliest possible day, with its card showing the full range as a badge.
+//
+// A task that's already booked on the calendar (status "scheduled") is
+// bucketed by the day it's booked for instead, which wins over any planned
+// date. Otherwise a task booked for next Thursday would sit in today's
+// Scheduled section.
+function scheduledDay(task) {
+  if (task.status !== "scheduled") return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(task.scheduled_date || "");
+  return m ? m[1] : null;
+}
+
+// A booking whose day has already passed is stale: the slot is gone, so the
+// task is really back to being unscheduled work. It's bucketed by its
+// deadline (Recently Due, Overdue, ...) like any other unscheduled task
+// instead of sitting in Scheduled. Only a booking for today or later (or one
+// with no recorded date) counts as actively scheduled.
+function isStaleScheduled(task, todayStr) {
+  const d = scheduledDay(task);
+  return !!d && d < todayStr;
+}
+
+function isActiveScheduled(task, todayStr) {
+  return task.status === "scheduled" && !isStaleScheduled(task, todayStr);
+}
+
+function localDateStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function effectivePlannedDate(task) {
-  return task.planned_date || task.planned_window_start || null;
+  return (
+    scheduledDay(task) || task.planned_date || task.planned_window_start || null
+  );
+}
+
+// "02:00 PM" / "2:00PM" / "14:00" -> minutes after midnight, for ordering
+// a day's scheduled tasks. Unparseable times sort last.
+function scheduledMinutes(task) {
+  const m = /^(\d{1,2}):(\d{2})\s*([AP]M)?$/i.exec(
+    (task.scheduled_time || "").trim(),
+  );
+  if (!m) return 24 * 60;
+  let h = +m[1] % 12;
+  if (m[3] ? m[3].toUpperCase() === "PM" : +m[1] >= 12) h += 12;
+  return h * 60 + +m[2];
 }
 
 // "Mon 8:45 AM" / "today 8:45 AM" / "tomorrow 8:45 AM" for the menu label.
@@ -222,7 +266,7 @@ function TaskCard({ task, onTouchStart, onTouchEnd, onRightClick }) {
           📓
         </a>
       )}
-      {task.status === "scheduled" && (
+      {task.status === "scheduled" && !isStaleScheduled(task, localDateStr()) && (
         <span className="task-scheduled-badge">●</span>
       )}
     </div>
@@ -334,6 +378,10 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
       })
     : null;
 
+  const tomorrowDate = new Date(today);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowStr = `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
+
   const plannedForViewedDate = isViewingFuture
     ? plannedLater.filter((t) => effectivePlannedDate(t) === viewedDateStr)
     : [];
@@ -352,6 +400,8 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
               t.planned_window_start === "None" ? null : t.planned_window_start,
             planned_window_end:
               t.planned_window_end === "None" ? null : t.planned_window_end,
+            scheduled_date: t.scheduled_date === "None" ? null : t.scheduled_date,
+            scheduled_time: t.scheduled_time === "None" ? null : t.scheduled_time,
             deadline: t.deadline === "None" ? null : t.deadline,
             created: t.created === "None" ? null : t.created,
             durationMinutes: parseDurationToMinutes(t.duration),
@@ -843,19 +893,19 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
       tasks.filter(
         (t) =>
           t.planned_date === todayStr &&
-          t.status !== "scheduled" &&
+          !isActiveScheduled(t, todayStr) &&
           t.status !== "in-progress",
       ),
     ),
   );
   const scheduled = sortByUrgency(
-    applyFilter(tasks.filter((t) => t.status === "scheduled")),
+    applyFilter(tasks.filter((t) => isActiveScheduled(t, todayStr))),
   );
   const unscheduledAll = sortByUrgency(
     applyFilter(
       tasks.filter(
         (t) =>
-          t.status !== "scheduled" &&
+          !isActiveScheduled(t, todayStr) &&
           t.status !== "in-progress" &&
           t.planned_date !== todayStr,
       ),
@@ -887,7 +937,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
   // actually do something.
   const canMute = (t) =>
     !t.muted &&
-    t.status !== "scheduled" &&
+    !isActiveScheduled(t, todayStr) &&
     t.status !== "in-progress" &&
     (!t.planned_date || t.planned_date < todayStr) &&
     isMutable(t);
@@ -951,6 +1001,22 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
   // Backlog when viewing a future date (so the viewed date leads, but
   // today's leftovers stay reachable).
   const todaySection = renderSection("📋 Planned Today", todayPlanned);
+
+  // Scheduled Tomorrow: a read-only look ahead at what's already booked for
+  // tomorrow. Only when viewing today (a future view has its own
+  // "Planned for <date>" section). Booked tasks further out stay in
+  // Planned for Later.
+  const scheduledTomorrow = isViewingFuture
+    ? []
+    : plannedLater
+        .filter((t) => t.status === "scheduled" && scheduledDay(t) === tomorrowStr)
+        .sort((a, b) => scheduledMinutes(a) - scheduledMinutes(b));
+  const scheduledTomorrowFiles = new Set(scheduledTomorrow.map((t) => t.file));
+  const plannedLaterShown = plannedLater.filter(
+    (t) =>
+      !scheduledTomorrowFiles.has(t.file) &&
+      (!isViewingFuture || effectivePlannedDate(t) !== viewedDateStr),
+  );
 
   const isInProgressTask = taskMenu?.task?.status === "in-progress";
 
@@ -1049,6 +1115,23 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
         {renderSection("⏰ Due Soon", dueSoon, "#D4A843")}
         {renderSection("🚨 Overdue", overdue, "#6B6560")}
 
+        {/* Scheduled Tomorrow — placed after everything that's for today,
+            so tomorrow's bookings never sit above today's work. */}
+        {!loading && scheduledTomorrow.length > 0 && (
+          <>
+            <div className="task-section-header">📅 Scheduled Tomorrow</div>
+            {scheduledTomorrow.map((task) => (
+              <TaskCard
+                key={task.file}
+                task={task}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+                onRightClick={handleRightClick}
+              />
+            ))}
+          </>
+        )}
+
         {/* Backlog — no deadline, or due further out than DUE_SOON_DAYS */}
         {renderSection("📋 Backlog", backlog)}
 
@@ -1113,9 +1196,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
             windowed task groups under its window's start date (see
             effectivePlannedDate above), same as every other task here. */}
         {!loading &&
-          plannedLater.filter(
-            (t) => !isViewingFuture || effectivePlannedDate(t) !== viewedDateStr,
-          ).length > 0 && (
+          plannedLaterShown.length > 0 && (
             <div className="planned-later-section">
               <button
                 className="planned-later-header"
@@ -1123,13 +1204,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
               >
                 <span>
                   {showPlannedLater ? "▾" : "▸"} Planned for Later (
-                  {
-                    plannedLater.filter(
-                      (t) =>
-                        !isViewingFuture ||
-                        effectivePlannedDate(t) !== viewedDateStr,
-                    ).length
-                  }
+                  {plannedLaterShown.length}
                   )
                 </span>
               </button>
@@ -1137,13 +1212,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
               {showPlannedLater && (
                 <div className="planned-later-list">
                   {Object.entries(
-                    plannedLater
-                      .filter(
-                        (t) =>
-                          !isViewingFuture ||
-                          effectivePlannedDate(t) !== viewedDateStr,
-                      )
-                      .reduce((groups, task) => {
+                    plannedLaterShown.reduce((groups, task) => {
                         const date = effectivePlannedDate(task);
                         if (!groups[date]) groups[date] = [];
                         groups[date].push(task);
@@ -1236,7 +1305,7 @@ export default function TaskPool({ onRefresh, viewedDate, onCompleteAddNext }) {
               /* Regular task — show Schedule options */
               <>
                 <div className="context-section-label">Schedule</div>
-                {taskMenu.task.status !== "scheduled" && (
+                {!isActiveScheduled(taskMenu.task, todayStr) && (
                   <button
                     onClick={() => handleScheduleAtSuggested(taskMenu.task)}
                   >

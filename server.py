@@ -423,6 +423,13 @@ def get_current_tasks():
                         "muted": bool(post.metadata.get("muted", False)),
                         "suggested_time": compute_suggested_time(post.metadata),
                         "scheduled_end": compute_scheduled_end(post.metadata),
+                        # Which day a scheduled task is booked for, so the
+                        # task list can keep future-dated ones out of today's
+                        # Scheduled section.
+                        "scheduled_date": str(post.metadata.get("scheduled_date", ""))
+                        or None,
+                        "scheduled_time": str(post.metadata.get("scheduled_time", ""))
+                        or None,
                     }
                 )
 
