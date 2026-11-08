@@ -949,6 +949,17 @@ Reply with ONLY one word: keep or delete"""
         return True
 
 
+_WEEKDAY_NAMES = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+]
+
+
 def _spawn_next_recurrence(post: object, original_filepath) -> None:
     """
     Create the next instance of a recurring task.
@@ -980,7 +991,25 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
     elif "hour" in recurrence_lower:
         match = re.search(r"(\d+)", recurrence_lower)
         hours = int(match.group(1)) if match else 24
-    elif "day" in recurrence_lower:
+    elif any(d in recurrence_lower for d in _WEEKDAY_NAMES):
+        # Specific weekdays, e.g. "every Friday" or "on mondays and wednesdays".
+        # This must be checked BEFORE the generic "day" branch below: every
+        # weekday name ends in "day", so "every Friday" used to be read as
+        # "every 1 day" and respawned the task for tomorrow.
+        target_days = [i for i, d in enumerate(_WEEKDAY_NAMES) if d in recurrence_lower]
+        today_weekday = datetime.now().weekday()
+        # Nearest upcoming target day; offset 7 means the same weekday next
+        # week, so finishing a Friday task on Friday gives next Friday.
+        for offset in range(1, 8):
+            if (today_weekday + offset) % 7 in target_days:
+                days = offset
+                break
+    elif "biweekly" in recurrence_lower or "bi-weekly" in recurrence_lower:
+        # Before the generic "week" branch, which would read this as 1 week
+        days = 14
+    elif "fortnight" in recurrence_lower:
+        days = 14
+    elif "day" in recurrence_lower or "daily" in recurrence_lower:
         match = re.search(r"(\d+)", recurrence_lower)
         days = int(match.group(1)) if match else 1
     elif "week" in recurrence_lower:
@@ -991,47 +1020,6 @@ def _spawn_next_recurrence(post: object, original_filepath) -> None:
         match = re.search(r"(\d+)", recurrence_lower)
         months = int(match.group(1)) if match else 1
         days = months * 30
-    elif "biweekly" in recurrence_lower or "bi-weekly" in recurrence_lower:
-        days = 14
-    elif "fortnight" in recurrence_lower:
-        days = 14
-    elif any(
-        day in recurrence_lower
-        for day in [
-            "monday",
-            "tuesday",
-            "wednesday",
-            "thursday",
-            "friday",
-            "saturday",
-            "sunday",
-        ]
-    ):
-        # Handle specific day patterns e.g. "on mondays and wednesdays"
-        day_names = [
-            "monday",
-            "tuesday",
-            "wednesday",
-            "thursday",
-            "friday",
-            "saturday",
-            "sunday",
-        ]
-        target_days = [i for i, day in enumerate(day_names) if day in recurrence_lower]
-
-        if target_days:
-            today_weekday = datetime.now().weekday()
-            days_ahead = None
-
-            # Find the nearest upcoming target day
-            for offset in range(1, 8):
-                next_weekday = (today_weekday + offset) % 7
-                if next_weekday in target_days:
-                    days_ahead = offset
-                    break
-
-            if days_ahead:
-                days = days_ahead
 
     if not days and not hours:
         print(f"Could not parse recurrence: {recurrence}")
